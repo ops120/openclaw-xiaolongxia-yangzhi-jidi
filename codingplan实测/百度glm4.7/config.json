@@ -1,0 +1,16 @@
+{
+  "version": "1.1.0",
+  "log_level": "INFO",
+  "log_file": null,
+  "default_output_dir": "watermarked",
+  "max_backup_count": 10,
+  "ui": {
+    "theme": "default",
+    "language": "zh_CN",
+    "window_size": [900, 700]
+  },
+  "watermark": {
+    "default_project": "",
+    "default_department": ""
+  }
+}

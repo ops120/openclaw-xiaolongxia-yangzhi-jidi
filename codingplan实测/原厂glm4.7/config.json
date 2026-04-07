@@ -1,0 +1,8 @@
+{
+  "default_key_name": "默认密钥",
+  "output_directory": "watermarked",
+  "log_level": "INFO",
+  "log_file": "watermark.log",
+  "window_width": 900,
+  "window_height": 700
+}

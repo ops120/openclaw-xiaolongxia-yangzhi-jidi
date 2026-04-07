@@ -1,0 +1,20 @@
+{
+  "app_name": "Word智能水印溯源系统",
+  "version": "1.1.0",
+  "default_key_name": "default",
+  "output_dir": "watermarked",
+  "log_dir": "logs",
+  "db_file": "watermark.db",
+  "backup_dir": "backups",
+  "ui": {
+    "theme": "default",
+    "language": "zh_CN",
+    "window_width": 1000,
+    "window_height": 700
+  },
+  "watermark": {
+    "max_embed_positions": 10,
+    "min_embed_positions": 3,
+    "default_salt": "ZG9jeF93YXRlcm1hcmtfc2FsdF92MQ=="
+  }
+}

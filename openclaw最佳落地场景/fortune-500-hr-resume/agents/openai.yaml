@@ -1,0 +1,4 @@
+interface:
+  display_name: "世界500强资深HR帮你写简历"
+  short_description: "以资深HR视角重写、诊断和定制中英文简历"
+  default_prompt: "使用 $fortune-500-hr-resume 按目标岗位重写我的简历，突出招聘初筛关键词、职业成长、项目证据和真实量化成果。"

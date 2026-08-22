@@ -49,3 +49,9 @@ dist/
 build/
 out/
 bak/
+
+# 自买自测下的 md→PNG 转换产物（每硬件子目录里）
+自买自测/*/pages/
+自买自测/*/_doc.html
+自买自测/*/_doc.pdf
+自买自测/*/_convert_*.py

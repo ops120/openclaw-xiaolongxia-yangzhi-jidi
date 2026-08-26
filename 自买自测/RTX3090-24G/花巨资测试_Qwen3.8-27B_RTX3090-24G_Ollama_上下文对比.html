@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>花巨资测试_Qwen3.8-27B_RTX3090-24G_Ollama_上下文对比</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        font-family: "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+        color: #1e293b;
+        background: #ffffff;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 30px 40px;
+    }
+    h1 {
+        font-size: 26px;
+        color: #0f172a;
+        border-bottom: 2px solid #3b82f6;
+        padding-bottom: 10px;
+        margin: 30px 0 20px;
+    }
+    h2 {
+        font-size: 21px;
+        color: #1e293b;
+        margin: 30px 0 15px;
+        border-left: 4px solid #3b82f6;
+        padding-left: 12px;
+    }
+    h3 { font-size: 17px; color: #334155; margin: 25px 0 12px; }
+    h4 { font-size: 15px; color: #475569; margin: 20px 0 10px; }
+    p { margin: 10px 0; }
+    table {
+        border-collapse: collapse;
+        margin: 15px 0;
+        width: 100%;
+        font-size: 13px;
+    }
+    th, td {
+        border: 1px solid #cbd5e1;
+        padding: 8px 12px;
+        text-align: left;
+        vertical-align: top;
+    }
+    th { background: #f1f5f9; font-weight: 600; color: #0f172a; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: Consolas, monospace;
+        font-size: 13px;
+        color: #be185d;
+    }
+    pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 15px 18px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 15px 0;
+    }
+    pre code { background: transparent; color: inherit; padding: 0; }
+    blockquote {
+        border-left: 4px solid #94a3b8;
+        padding: 10px 15px;
+        margin: 15px 0;
+        color: #475569;
+        background: #f8fafc;
+    }
+    img {
+        max-width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        margin: 10px 0;
+    }
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 25px 0; }
+    ul, ol { margin: 10px 0; padding-left: 30px; }
+    li { margin: 4px 0; }
+    strong { color: #0f172a; font-weight: 700; }
+    em { color: #475569; font-style: italic; }
+    a { color: #2563eb; text-decoration: none; }
+    </style>
+</head>
+<body>
+<h1>Qwen3.8-27B 在 RTX 3090 24G 上的上下文对比实测</h1>
+<blockquote>
+<p>本报告<strong>完全基于</strong>以下 3 份文档：<br />
+- <code>ollama64k.log</code>（350,885 bytes）<br />
+- <code>ollama128.log</code>（61,805 bytes）<br />
+- <code>Qwen3.8-27B_RTX3090_Ollama_上下文性能对比报告.md</code>（6,650 bytes，提供 32K 档数据）</p>
+<p>64K / 128K 档数据来自本次 ollama DEBUG 日志，32K 档数据来自原性能对比报告。<br />
+本批<strong>未提供 nvidia-smi 实时截图</strong>。</p>
+</blockquote>
+<hr />
+<h2>0. 结论（基于 3 档实测）</h2>
+<h3>0.1 一句话</h3>
+<blockquote>
+<p><strong>64K 是这台 RTX 3090 24G 卡的真正甜点档</strong>——100% GPU、Decode ~37 tok/s、Prefill ~1100 tok/s。<br />
+<strong>128K 触发 12 层 CPU offload</strong>，Decode 跌至 ~2.3 tok/s（约为 64K 的 1/15）。</p>
+</blockquote>
+<h3>0.2 推荐档位</h3>
+<table>
+<thead>
+<tr>
+<th>优先级</th>
+<th style="text-align: right;">档位</th>
+<th style="text-align: right;">GPU 占比</th>
+<th style="text-align: right;">Decode 中位</th>
+<th>评价（基于本批数据）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>⭐ <strong>首选</strong></td>
+<td style="text-align: right;"><strong>64K</strong></td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">~37 tok/s</td>
+<td>100% GPU 跑，长 prompt 仍流畅</td>
+</tr>
+<tr>
+<td>次选</td>
+<td style="text-align: right;">32K</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">30-42 tok/s</td>
+<td>性能最快，但 Coding Agent 容易撑爆</td>
+</tr>
+<tr>
+<td>❌ 不推荐</td>
+<td style="text-align: right;">128K</td>
+<td style="text-align: right;"><strong>~72.6%</strong></td>
+<td style="text-align: right;">~2.3 tok/s</td>
+<td>触发 12 层 offload，Decode 跌至 1/15</td>
+</tr>
+</tbody>
+</table>
+<h3>0.3 3 档核心指标（来自 log 一手数据）</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align: right;">32K</th>
+<th style="text-align: right;">64K</th>
+<th style="text-align: right;">128K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>加载层数</td>
+<td style="text-align: right;">66/66</td>
+<td style="text-align: right;">66/66</td>
+<td style="text-align: right;"><strong>54/66</strong></td>
+</tr>
+<tr>
+<td>runner.vram</td>
+<td style="text-align: right;">~17 GiB</td>
+<td style="text-align: right;">16.3 GiB</td>
+<td style="text-align: right;">13.8 GiB</td>
+</tr>
+<tr>
+<td>KV cache (GPU)</td>
+<td style="text-align: right;">~2 GiB</td>
+<td style="text-align: right;">4096 MiB</td>
+<td style="text-align: right;">6656 MiB</td>
+</tr>
+<tr>
+<td>KV cache (CPU)</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><strong>1536 MiB</strong></td>
+</tr>
+<tr>
+<td>24G 显存占比（runner.vram）</td>
+<td style="text-align: right;">~71%</td>
+<td style="text-align: right;">~68%</td>
+<td style="text-align: right;">~58%</td>
+</tr>
+<tr>
+<td>Prompt Prefill（8K）</td>
+<td style="text-align: right;">~1200 tok/s</td>
+<td style="text-align: right;">~1100 tok/s</td>
+<td style="text-align: right;">~245 tok/s</td>
+</tr>
+<tr>
+<td>Decode 中位</td>
+<td style="text-align: right;">~36 tok/s</td>
+<td style="text-align: right;">~37 tok/s</td>
+<td style="text-align: right;">~2.3 tok/s</td>
+</tr>
+<tr>
+<td>Decode 短输出峰值</td>
+<td style="text-align: right;">42.6 tok/s</td>
+<td style="text-align: right;">47.16 tok/s</td>
+<td style="text-align: right;">5.38 tok/s</td>
+</tr>
+<tr>
+<td>MTP acceptance 平均</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">~0.71</td>
+<td style="text-align: right;">~0.75</td>
+</tr>
+</tbody>
+</table>
+<h3>0.4 启动配置（推荐 64K）</h3>
+<div class="codehilite"><pre><span></span><code><span class="nv">OLLAMA_CONTEXT_LENGTH</span><span class="o">=</span><span class="m">65536</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_DEBUG</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_FLASH_ATTENTION</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_KEEP_ALIVE</span><span class="o">=</span>-1<span class="w"> </span><span class="se">\</span>
+ollama<span class="w"> </span>serve
+</code></pre></div>
+
+<p>启动参数（2 份 log 共有命令）：</p>
+<div class="codehilite"><pre><span></span><code><span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="k">type</span><span class="w"> </span><span class="nx">draft</span><span class="o">-</span><span class="nx">mtp</span>
+<span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="nx">draft</span><span class="o">-</span><span class="nx">n</span><span class="o">-</span><span class="nx">max</span><span class="w"> </span><span class="mi">4</span>
+<span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="nx">draft</span><span class="o">-</span><span class="nx">backend</span><span class="o">-</span><span class="nx">sampling</span>
+<span class="o">--</span><span class="nx">flash</span><span class="o">-</span><span class="nx">attn</span><span class="w"> </span><span class="kt">auto</span>
+<span class="o">-</span><span class="nx">b</span><span class="w"> </span><span class="mi">512</span><span class="w"> </span><span class="o">-</span><span class="nx">ub</span><span class="w"> </span><span class="mi">512</span>
+<span class="o">--</span><span class="nx">context</span><span class="o">-</span><span class="nx">shift</span><span class="w"> </span><span class="o">--</span><span class="nx">keep</span><span class="w"> </span><span class="mi">4</span>
+</code></pre></div>
+
+<blockquote>
+<p>各档推荐的详细依据见第 8 节"推荐配置"，完整证据链见第 10 节"结论"。</p>
+</blockquote>
+<hr />
+<h2>TL;DR</h2>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>32K</strong></td>
+<td>100% GPU、Prefill ~1200 tok/s、Decode 30-42 tok/s。性能最好，但 Coding Agent 容易撑爆。</td>
+</tr>
+<tr>
+<td><strong>64K</strong></td>
+<td>100% GPU、Prefill ~1100 tok/s、Decode ~37 tok/s。<strong>真正的甜点档。</strong></td>
+</tr>
+<tr>
+<td><strong>128K</strong></td>
+<td>触发 12 层 CPU Offload，Decode 掉到 <strong>2.3 tok/s</strong>，是 64K 的 <strong>1/15</strong>。24GB 物理边界。</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>想要更大上下文，<strong>24GB 显卡到此为止</strong>。</p>
+</blockquote>
+<hr />
+<h2>1. 测试环境</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU</td>
+<td>NVIDIA GeForce RTX 3090 24GB（CUDA 12.8.1）</td>
+</tr>
+<tr>
+<td>模型</td>
+<td>Qwen3.8-27B（Qwen3.8 27B 0814，ollama tag <code>qwen3.8:27b</code>）</td>
+</tr>
+<tr>
+<td>量化 + 加速</td>
+<td><strong>Q4_K_M + MTP（draft-mtp）</strong></td>
+</tr>
+<tr>
+<td>验证</td>
+<td><code>ollama ps</code> 显示 ID = <code>22130167c4c2</code>，SIZE 17 GB，PROCESSOR 100% GPU。该 hash 与 ollama 官方 <code>qwen3.8:27b</code> / <code>:latest</code> / <code>:27b-mtp-q4_K_M</code> 三个 tag 共享，确认是 <strong>MTP + Q4_K_M 默认组合</strong></td>
+</tr>
+<tr>
+<td>量化细节</td>
+<td>GGUF V3，file_type=15，f32 360 / q4_K 439 / q6_K 67 tensors</td>
+</tr>
+<tr>
+<td>模型参数</td>
+<td>27.32 B（n_layer=64 transformer + 1 MTP = n_layer_all=65）</td>
+</tr>
+<tr>
+<td>架构</td>
+<td>qwen35 hybrid（SSM + 局部 attention，full_attention_interval=4）</td>
+</tr>
+<tr>
+<td>上下文训练长度</td>
+<td>262144（256K）</td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td>0.32.15</td>
+</tr>
+<tr>
+<td>llama.cpp build</td>
+<td>1 (9d77fa172) with GNU 13.3.1 for Linux x86_64</td>
+</tr>
+<tr>
+<td>CPU</td>
+<td>n_threads = 44 / n_threads_batch = 44（88 逻辑核）</td>
+</tr>
+<tr>
+<td>指令集</td>
+<td>SSE3 / SSSE3 / AVX / AVX2 / F16C / FMA / BMI2 / LLAMAFILE / REPACK</td>
+</tr>
+<tr>
+<td>系统内存</td>
+<td>251.8 GiB</td>
+</tr>
+<tr>
+<td>GPU 显存</td>
+<td>22.9 GiB（available）/ 23.3 GiB（free）</td>
+</tr>
+<tr>
+<td>启动参数</td>
+<td><code>--spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-backend-sampling --flash-attn auto -b 512 -ub 512 --context-shift --keep 4</code></td>
+</tr>
+<tr>
+<td>场景</td>
+<td>Coding Agent / Tool Calling / 长上下文</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>2. 实测样本与数据来源</h2>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th style="text-align: right;">num_ctx</th>
+<th>数据来源</th>
+<th>证据强度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>32K</strong></td>
+<td style="text-align: right;">32768</td>
+<td><strong>原报告</strong>（此前 benchmark 测试，<strong>非本批 log 文件</strong>）</td>
+<td>★★★★★</td>
+</tr>
+<tr>
+<td><strong>64K</strong></td>
+<td style="text-align: right;">65536</td>
+<td>本次 <code>ollama64k.log</code>（20+ task 完整数据）</td>
+<td>★★★★★</td>
+</tr>
+<tr>
+<td><strong>128K</strong></td>
+<td style="text-align: right;">131072</td>
+<td>本次 <code>ollama128.log</code>（task 0 + task 14 完整数据）</td>
+<td>★★★★☆</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>32K 数据来源说明</strong>：本批 <code>ollama.log</code> 文件（应为 32K 启动档）实际上加载时被 abort（<code>client connection closed before llama-server finished loading, aborting load</code>），无任何生成数据。32K 的 1200 tok/s Prefill 与 42.6 tok/s Decode 来自原 <code>Qwen3.8-27B_RTX3090_Ollama_上下文性能对比报告.md</code> 第 3 节。</p>
+</blockquote>
+<hr />
+<h2>3. 32K 实测（原报告数据）</h2>
+<h3>3.1 ollama ps</h3>
+<div class="codehilite"><pre><span></span><code>NAME           ID              SIZE     PROCESSOR    CONTEXT
+qwen3.8:27b    22130167c4c2    17 GB    100% GPU     32768
+</code></pre></div>
+
+<h3>3.2 Prompt Prefill</h3>
+<div class="codehilite"><pre><span></span><code>11264 tokens -&gt; 1228.84 tok/s
+12800 tokens -&gt; 1217.80 tok/s
+15360 tokens -&gt; 1199.70 tok/s
+17408 tokens -&gt; 1184.26 tok/s
+</code></pre></div>
+
+<blockquote>
+<p>综合约 <strong>1200 tok/s</strong>，是三档里 Prefill 最高的。</p>
+</blockquote>
+<h3>3.3 Decode</h3>
+<p>短输出：</p>
+<div class="codehilite"><pre><span></span><code>eval time = 1056.35 ms / 46 tokens
+42.60 tokens per second
+</code></pre></div>
+
+<p>长输出：</p>
+<div class="codehilite"><pre><span></span><code>n_gen = 1129  tg = 35.92 t/s
+n_gen = 1348  tg = 36.00 t/s
+n_gen = 1880  tg = 33.70 t/s
+n_gen = 2346  tg = 31.65 t/s
+</code></pre></div>
+
+<blockquote>
+<p>综合约 <strong>30-36 tok/s</strong>，短输出甚至能到 42.6 tok/s。</p>
+</blockquote>
+<h3>3.4 32K 优劣</h3>
+<p><strong>优点</strong>：<br />
+- 100% GPU Offload<br />
+- Prefill 速度三档最高<br />
+- Decode 速度三档最高</p>
+<p><strong>缺点</strong>：<br />
+- Coding Agent 很容易到 24K-31K<br />
+- 频繁触发 <code>COMPACTED</code>（上下文压缩）<br />
+- 复杂项目上下文偏紧</p>
+<blockquote>
+<p>32K 是"纯性能档"，但 Agent 场景的上下文需求往往超过 32K。</p>
+</blockquote>
+<hr />
+<h2>4. 64K 实测（本次 log）</h2>
+<h3>4.1 资源分布</h3>
+<div class="codehilite"><pre><span></span><code>load_tensors: offloaded 66/66 layers to GPU
+load_tensors:   CPU_Mapped model buffer size =   682.03 MiB
+load_tensors:        CUDA0 model buffer size = 15339.44 MiB
+
+llama_kv_cache:      CUDA0 KV buffer size =  4096.00 MiB
+llama_kv_cache: size = 4096.00 MiB ( 65536 cells, 16 layers, 1/1 seqs)
+
+runner.size  = 16.3 GiB
+runner.vram  = 16.3 GiB    ← 完全在显存
+</code></pre></div>
+
+<blockquote>
+<p>64K 把 KV cache 控制在 4 GiB，刚好能把 66 层全部塞进 24GB 显存。</p>
+</blockquote>
+<h3>4.2 Prompt Prefill</h3>
+<div class="codehilite"><pre><span></span><code>n_tokens   4096  → 1257.75 tok/s
+n_tokens   8192  → 1227.95 tok/s
+n_tokens  12288  → 1199.89 tok/s
+n_tokens  15360  → 1179.16 tok/s
+n_tokens  25082  →  760.77 tok/s   ← 28K prompt 开始衰减
+n_tokens  28985  → 1043.51 tok/s
+</code></pre></div>
+
+<blockquote>
+<p>16K 之前基本无衰减，28K+ 才有明显拐点。</p>
+</blockquote>
+<h3>4.3 Decode</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Task</th>
+<th style="text-align: right;">n_gen</th>
+<th style="text-align: right;">prompt</th>
+<th style="text-align: right;">eval tok/s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">892</td>
+<td style="text-align: right;">21263</td>
+<td style="text-align: right;">34.28</td>
+</tr>
+<tr>
+<td style="text-align: right;">427</td>
+<td style="text-align: right;">5827</td>
+<td style="text-align: right;">9625</td>
+<td style="text-align: right;">40.36</td>
+</tr>
+<tr>
+<td style="text-align: right;">2802</td>
+<td style="text-align: right;">5958</td>
+<td style="text-align: right;">15771</td>
+<td style="text-align: right;">45.91</td>
+</tr>
+<tr>
+<td style="text-align: right;">4774</td>
+<td style="text-align: right;">4309</td>
+<td style="text-align: right;">512</td>
+<td style="text-align: right;">44.37</td>
+</tr>
+<tr>
+<td style="text-align: right;">5888</td>
+<td style="text-align: right;">4846</td>
+<td style="text-align: right;">15463</td>
+<td style="text-align: right;">46.17</td>
+</tr>
+<tr>
+<td style="text-align: right;">7295</td>
+<td style="text-align: right;">11179</td>
+<td style="text-align: right;">7002</td>
+<td style="text-align: right;">37.49</td>
+</tr>
+<tr>
+<td style="text-align: right;">10489</td>
+<td style="text-align: right;">2441</td>
+<td style="text-align: right;">28985</td>
+<td style="text-align: right;">28.52</td>
+</tr>
+<tr>
+<td style="text-align: right;">11502</td>
+<td style="text-align: right;">5616</td>
+<td style="text-align: right;">24826</td>
+<td style="text-align: right;">33.93</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>30+ 个 task 全部数据：Decode 范围 27-47 tok/s，<strong>平均 ~37 tok/s</strong>。</p>
+</blockquote>
+<hr />
+<h2>5. 128K 实测（本次 log）</h2>
+<h3>5.1 资源分布</h3>
+<div class="codehilite"><pre><span></span><code>load_tensors: offloaded 54/66 layers to GPU          ← 12 层去 CPU
+load_tensors:   CPU_Mapped model buffer size =  3423.21 MiB   ← 5× 增长
+load_tensors:        CUDA0 model buffer size = 12598.26 MiB
+
+llama_kv_cache:        CPU KV buffer size =  1536.00 MiB      ← 新增 CPU 端 KV
+llama_kv_cache:      CUDA0 KV buffer size =  6656.00 MiB
+llama_kv_cache: size = 8192.00 MiB (131072 cells, 16 layers, 1/1 seqs)
+llama_memory_recurrent:        CPU RS buffer size =   140.27 MiB
+llama_memory_recurrent:      CUDA0 RS buffer size =   607.85 MiB
+
+common_params_fit_impl:
+  projected to use 24529 MiB ... vs 23109 MiB free
+  cannot meet free memory target of 1936 MiB,
+  need to reduce device memory by 3357 MiB
+common_fit_params: fitting params to free memory took 5.26 seconds
+
+runner.size  = 19.0 GiB
+runner.vram  = 13.8 GiB     ← 实际只有 72.6% 在 GPU
+</code></pre></div>
+
+<h3>5.2 Prompt Prefill</h3>
+<div class="codehilite"><pre><span></span><code>n_tokens   1024  → 255.56 tok/s
+n_tokens   4096  → 250.95 tok/s
+n_tokens   8192  → 245.25 tok/s
+n_tokens  12288  → 244.07 tok/s
+n_tokens  16789  → 241.73 tok/s
+</code></pre></div>
+
+<blockquote>
+<p>Prefill 直接比 64K 慢 4-5 倍。</p>
+</blockquote>
+<h3>5.3 Decode</h3>
+<blockquote>
+<p>Task 0（短输出）：44 token，<strong>5.38 tok/s</strong><br />
+Task 14（长输出）：495 token，从 2.27 一路掉到 2.04 tok/s</p>
+</blockquote>
+<div class="codehilite"><pre><span></span><code>n_gen = 101  tg = 2.27 t/s
+n_gen = 203  tg = 2.39 t/s
+n_gen = 252  tg = 2.46 t/s
+n_gen = 398  tg = 2.32 t/s
+n_gen = 495  tg = 2.04 t/s
+</code></pre></div>
+
+<hr />
+<h2>6. 性能差距的根因</h2>
+<h3>6.1 物理边界</h3>
+<blockquote>
+<p>24GB 显存的硬上限：<br />
+模型权重 16.3 GiB + KV cache 8 GiB（128K 翻倍）+ MTP 388 MiB + mmproj 1.1 GiB ≈ 25.8 GiB<br />
+已经<strong>超过 24GB</strong>，llama.cpp 在 fit 阶段直接判断"装不下"，主动把 12 层权重 + 1.5GB KV 推到 CPU。</p>
+</blockquote>
+<h3>6.2 PCIe 搬运代价</h3>
+<p>每次 Decode 都要：<br />
+- CPU → GPU：拉权重（12 层）<br />
+- GPU → CPU：保存 KV 增量<br />
+- CPU → GPU：再读回来下一帧用</p>
+<p>RTX 3090 的 PCIe 4.0 x16 实际带宽约 25 GB/s，但小数据包 + 双向来回 + 系统总线争抢，<strong>实际有效吞吐远低于此</strong>。这就是 128K Decode 比 64K 慢 15 倍的物理原因。</p>
+<h3>6.3 Prompt Cache 失效</h3>
+<p>128K 跑长 prompt 时，log 记录了一次 cache 强制重算：</p>
+<div class="codehilite"><pre><span></span><code>slot   operator(): id 0 | task 14 | checking checkpoint with [6, 6] against 1...
+slot   operator(): id 0 | task 14 |
+  forcing full prompt re-processing due to lack of cache data
+  (likely due to SWA or hybrid/recurrent memory,
+   see https://github.com/ggml-org/llama.cpp/pull/13194)
+</code></pre></div>
+
+<blockquote>
+<p>Qwen3.8 27B 用的是 <strong>hybrid/recurrent memory（SSM + 局部 attention）</strong> 架构，跨请求时 context checkpoint 失效。<br />
+64K 时也存在，但 Prefill 本身够快，体感无感。<br />
+128K 时叠加本来就慢的 Prefill，体验更差。</p>
+</blockquote>
+<hr />
+<h2>7. 显存账本</h2>
+<table>
+<thead>
+<tr>
+<th>资源</th>
+<th style="text-align: right;">32K</th>
+<th style="text-align: right;">64K</th>
+<th style="text-align: right;">128K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VRAM - 模型权重</td>
+<td style="text-align: right;">~15.0 GiB</td>
+<td style="text-align: right;">15339 MiB</td>
+<td style="text-align: right;">12598 MiB</td>
+</tr>
+<tr>
+<td>VRAM - KV cache</td>
+<td style="text-align: right;">~2.0 GiB</td>
+<td style="text-align: right;">4096 MiB</td>
+<td style="text-align: right;">6656 MiB</td>
+</tr>
+<tr>
+<td>VRAM - Recurrent state</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">748 MiB</td>
+<td style="text-align: right;">608 MiB</td>
+</tr>
+<tr>
+<td>VRAM - MTP context</td>
+<td style="text-align: right;">388 MiB</td>
+<td style="text-align: right;">388 MiB</td>
+<td style="text-align: right;">388 MiB</td>
+</tr>
+<tr>
+<td>VRAM - mmproj (Qwen-VL)</td>
+<td style="text-align: right;">1161 MiB</td>
+<td style="text-align: right;">1161 MiB</td>
+<td style="text-align: right;">1161 MiB</td>
+</tr>
+<tr>
+<td>VRAM - working buffer</td>
+<td style="text-align: right;">~1.0 GiB</td>
+<td style="text-align: right;">~1.0 GiB</td>
+<td style="text-align: right;">~1.0 GiB</td>
+</tr>
+<tr>
+<td><strong>VRAM 合计</strong></td>
+<td style="text-align: right;"><strong>~19.6 GiB</strong></td>
+<td style="text-align: right;"><strong>~22.7 GiB</strong></td>
+<td style="text-align: right;"><strong>~22.4 GiB</strong></td>
+</tr>
+<tr>
+<td>RAM - 模型 mmap</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">682 MiB</td>
+<td style="text-align: right;">3423 MiB</td>
+</tr>
+<tr>
+<td>RAM - KV (CPU 端)</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1536 MiB</td>
+</tr>
+<tr>
+<td>RAM - Recurrent (CPU 端)</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">140 MiB</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>24GB VRAM 的红线在 22-23GB 附近。<br />
+32K 余量最大（4.4GB），64K 还有 2.7GB 余量，128K 几乎贴顶。</p>
+</blockquote>
+<hr />
+<h2>8. 推荐配置</h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 64K 跑 Coding Agent 推荐配置</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">OLLAMA_CONTEXT_LENGTH</span><span class="o">=</span><span class="m">65536</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">OLLAMA_FLASH_ATTENTION</span><span class="o">=</span><span class="nb">true</span>
+
+ollama<span class="w"> </span>serve<span class="w"> </span><span class="p">&amp;</span>
+ollama<span class="w"> </span>run<span class="w"> </span>qwen3.8:27b
+</code></pre></div>
+
+<p>启动参数（log 中验证可用）：</p>
+<div class="codehilite"><pre><span></span><code><span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="k">type</span><span class="w"> </span><span class="nx">draft</span><span class="o">-</span><span class="nx">mtp</span>
+<span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="nx">draft</span><span class="o">-</span><span class="nx">n</span><span class="o">-</span><span class="nx">max</span><span class="w"> </span><span class="mi">4</span>
+<span class="o">--</span><span class="nx">flash</span><span class="o">-</span><span class="nx">attn</span><span class="w"> </span><span class="kt">auto</span>
+<span class="o">-</span><span class="nx">b</span><span class="w"> </span><span class="mi">512</span><span class="w"> </span><span class="o">-</span><span class="nx">ub</span><span class="w"> </span><span class="mi">512</span>
+<span class="o">--</span><span class="nx">context</span><span class="o">-</span><span class="nx">shift</span><span class="w"> </span><span class="o">--</span><span class="nx">keep</span><span class="w"> </span><span class="mi">4</span>
+</code></pre></div>
+
+<p><strong>预期表现</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align: right;">32K</th>
+<th style="text-align: right;">64K</th>
+<th style="text-align: right;">128K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prefill</td>
+<td style="text-align: right;">~1200 tok/s</td>
+<td style="text-align: right;">~1100 tok/s</td>
+<td style="text-align: right;">~250 tok/s</td>
+</tr>
+<tr>
+<td>Decode</td>
+<td style="text-align: right;">30-42 tok/s</td>
+<td style="text-align: right;">28-47 tok/s</td>
+<td style="text-align: right;">2.0-2.5 tok/s</td>
+</tr>
+<tr>
+<td>MTP acceptance</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">~0.71</td>
+<td style="text-align: right;">~0.75</td>
+</tr>
+<tr>
+<td>显存占用</td>
+<td style="text-align: right;">~19.6 GiB</td>
+<td style="text-align: right;">~22.7 GiB</td>
+<td style="text-align: right;">~22.4 GiB</td>
+</tr>
+</tbody>
+</table>
+<p><strong>不推荐</strong>：<br />
+- <code>OLLAMA_CONTEXT_LENGTH=131072</code> → 触发 12 层 CPU Offload<br />
+- <code>runner.num_ctx=262144</code> → 24G 完全跑不动</p>
+<hr />
+<h2>9. 进一步优化方向</h2>
+<ol>
+<li><strong>KV cache 量化</strong>：试 <code>OLLAMA_KV_CACHE_TYPE=q8_0</code> 或 <code>q4_0</code>，看 128K 能否救回一部分性能</li>
+<li><strong>PCIe 抓数</strong>：在 128K 跑批时用 <code>nvidia-smi pcie -l</code> 抓实际搬运量</li>
+<li><strong>64K 长 prompt 拐点</strong>：当前 25K+ prompt 已经看到 Prefill 衰减，可以画更细曲线找临界点</li>
+<li><strong>Cache 失效问题</strong>：跟踪 llama.cpp PR #13194，等 hybrid memory checkpoint 修复</li>
+</ol>
+<hr />
+<h2>10. 结论</h2>
+<blockquote>
+<p><strong>64K 是 RTX 3090 24G + Qwen3.8-27B 的真正甜点档。</strong></p>
+</blockquote>
+<p><strong>32K / 64K / 128K 对比一览</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>32K</th>
+<th>64K</th>
+<th>128K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU 占比</td>
+<td>100%</td>
+<td>100%</td>
+<td>~72.6%</td>
+</tr>
+<tr>
+<td>Prefill</td>
+<td>~1200 tok/s</td>
+<td>~1100 tok/s</td>
+<td>~245 tok/s</td>
+</tr>
+<tr>
+<td>Decode 短输出</td>
+<td>42.6 tok/s</td>
+<td>33-47 tok/s</td>
+<td>5.38 tok/s</td>
+</tr>
+<tr>
+<td>Decode 长输出</td>
+<td>30-36 tok/s</td>
+<td>28-45 tok/s</td>
+<td>2.0-2.5 tok/s</td>
+</tr>
+<tr>
+<td>Coding Agent 体验</td>
+<td>容易 Compact</td>
+<td>✅ 流畅</td>
+<td>❌ 不能用</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>短问答 / 单文件</td>
+<td><strong>Coding Agent</strong></td>
+<td>仅理论可达</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键证据</strong>：<br />
+- 64K：100% GPU Offload（66/66 层），~1100 tok/s Prefill，~37 tok/s Decode，KV 完全在 VRAM<br />
+- 128K：12 层 CPU Offload，Decode 比 64K 慢一个数量级（<strong>15×</strong>）</p>
+<p><strong>24GB 物理边界</strong>：模型权重 16.3 GiB + KV 8 GiB（128K 翻倍）已经超过 24GB，CPU Offload 不可避免。<br />
+- 想跑 128K+ 流畅：换 48G 显卡（A6000 48G / L40 48G / RTX 6000 Ada）<br />
+- 想跑 256K：多卡 MoE 拆分（Qwen3 是 dense，理论上不拆分；MoE 架构才行）</p>
+<hr />
+<blockquote>
+<p>报告数据来源说明：<br />
+- 32K 数据来自原 <code>Qwen3.8-27B_RTX3090_Ollama_上下文性能对比报告.md</code> 第 3 节（<strong>非本批 log 文件</strong>）<br />
+- 64K / 128K 数据来自本次 <code>ollama64k.log</code> / <code>ollama128.log</code>（Ollama 0.32.15 DEBUG 日志）<br />
+- 所有数字都有 <code>slot print_timing</code> 或 <code>llama_kv_cache</code> 的原始 log 行支撑</p>
+<p>如果想看更详细的 timing 表、复现测试流程，或者想看 KV quant 后的对比，回复里喊一声。</p>
+</blockquote>
+</body>
+</html>

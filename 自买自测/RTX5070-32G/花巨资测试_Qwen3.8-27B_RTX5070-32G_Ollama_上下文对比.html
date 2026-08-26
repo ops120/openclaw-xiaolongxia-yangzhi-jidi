@@ -1,0 +1,1342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>花巨资测试_Qwen3.8-27B_RTX5070-32G_Ollama_上下文对比</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        font-family: "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+        color: #1e293b;
+        background: #ffffff;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 30px 40px;
+    }
+    h1 {
+        font-size: 26px;
+        color: #0f172a;
+        border-bottom: 2px solid #3b82f6;
+        padding-bottom: 10px;
+        margin: 30px 0 20px;
+    }
+    h2 {
+        font-size: 21px;
+        color: #1e293b;
+        margin: 30px 0 15px;
+        border-left: 4px solid #3b82f6;
+        padding-left: 12px;
+    }
+    h3 { font-size: 17px; color: #334155; margin: 25px 0 12px; }
+    h4 { font-size: 15px; color: #475569; margin: 20px 0 10px; }
+    p { margin: 10px 0; }
+    table {
+        border-collapse: collapse;
+        margin: 15px 0;
+        width: 100%;
+        font-size: 13px;
+    }
+    th, td {
+        border: 1px solid #cbd5e1;
+        padding: 8px 12px;
+        text-align: left;
+        vertical-align: top;
+    }
+    th { background: #f1f5f9; font-weight: 600; color: #0f172a; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: Consolas, monospace;
+        font-size: 13px;
+        color: #be185d;
+    }
+    pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 15px 18px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 15px 0;
+    }
+    pre code { background: transparent; color: inherit; padding: 0; }
+    blockquote {
+        border-left: 4px solid #94a3b8;
+        padding: 10px 15px;
+        margin: 15px 0;
+        color: #475569;
+        background: #f8fafc;
+    }
+    img {
+        max-width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        margin: 10px 0;
+    }
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 25px 0; }
+    ul, ol { margin: 10px 0; padding-left: 30px; }
+    li { margin: 4px 0; }
+    strong { color: #0f172a; font-weight: 700; }
+    em { color: #475569; font-style: italic; }
+    a { color: #2563eb; text-decoration: none; }
+    </style>
+</head>
+<body>
+<h1>Qwen3.8-27B 32GB 上下文对比实测报告（基于一手 log）</h1>
+<blockquote>
+<p>本报告<strong>完全基于</strong>以下 9 份文档：<br />
+- <code>ollama64k.log</code>（190,584 bytes）<br />
+- <code>ollama128k.log</code>（205,328 bytes）<br />
+- <code>ollama192k.log</code>（162,428 bytes）<br />
+- <code>ollama256k.log</code>（63,861 bytes）<br />
+- <code>新建文本文档.txt</code>（2,048 bytes，含 <code>ollama ps</code> 与 <code>nvidia-smi</code> 实时输出）<br />
+- <code>64k.png</code>（11,714 bytes，64K 档 nvidia-smi 实时截图）<br />
+- <code>128k.png</code>（10,456 bytes，128K 档 nvidia-smi 实时截图）<br />
+- <code>192k.png</code>（9,912 bytes，192K 档 nvidia-smi 实时截图）<br />
+- <code>256k.png</code>（8,852 bytes，256K 档 nvidia-smi 实时截图）</p>
+<p>所有数字均来自上述文档的原始 log 行或截图。<strong>未引入任何外部硬件规格、跨硬件对比或未实测的预测</strong>。</p>
+</blockquote>
+<hr />
+<h2>0. 结论（基于 4 档实测）</h2>
+<h3>0.1 一句话</h3>
+<blockquote>
+<p><strong>192K 是这台 32GB 卡的真正甜点档</strong>——100% GPU、Decode ~52 tok/s、nvidia-smi 占用 97%。<br />
+<strong>256K 触发 12 层 CPU offload</strong>，Decode 跌至 ~7 tok/s（约为前三档的 1/8）。</p>
+</blockquote>
+<h3>0.2 推荐档位</h3>
+<table>
+<thead>
+<tr>
+<th>优先级</th>
+<th style="text-align: right;">档位</th>
+<th style="text-align: right;">GPU 占比</th>
+<th style="text-align: right;">Decode 中位</th>
+<th style="text-align: right;">nvidia-smi 占用</th>
+<th>评价（基于本批数据）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>⭐ <strong>首选</strong></td>
+<td style="text-align: right;"><strong>192K</strong></td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">~52 tok/s</td>
+<td style="text-align: right;"><strong>97%</strong></td>
+<td>4 档中 <code>size == vram</code> 的最大档</td>
+</tr>
+<tr>
+<td>次选</td>
+<td style="text-align: right;">128K</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">~58 tok/s</td>
+<td style="text-align: right;">83%</td>
+<td>4 档中 Decode 中位最高，余量充足</td>
+</tr>
+<tr>
+<td>❌ 不推荐</td>
+<td style="text-align: right;">64K</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">~56 tok/s</td>
+<td style="text-align: right;">69%</td>
+<td>没用满 32G，192K 已 100% GPU 跑</td>
+</tr>
+<tr>
+<td>❌ 不推荐</td>
+<td style="text-align: right;">256K</td>
+<td style="text-align: right;"><strong>32%/68% CPU/GPU</strong></td>
+<td style="text-align: right;">~7 tok/s</td>
+<td style="text-align: right;">95%</td>
+<td>触发 12 层 offload，Decode 跌至 1/8</td>
+</tr>
+</tbody>
+</table>
+<h3>0.3 4 档核心指标（来自 log 一手数据）</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align: right;">64K</th>
+<th style="text-align: right;">128K</th>
+<th style="text-align: right;">192K</th>
+<th style="text-align: right;">256K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>加载层数</td>
+<td style="text-align: right;">66/66</td>
+<td style="text-align: right;">66/66</td>
+<td style="text-align: right;">66/66</td>
+<td style="text-align: right;"><strong>54/66</strong></td>
+</tr>
+<tr>
+<td>runner.vram</td>
+<td style="text-align: right;">16.3 GiB</td>
+<td style="text-align: right;">16.6 GiB</td>
+<td style="text-align: right;">17.0 GiB</td>
+<td style="text-align: right;">14.5 GiB</td>
+</tr>
+<tr>
+<td>KV cache (GPU)</td>
+<td style="text-align: right;">4 GiB</td>
+<td style="text-align: right;">8 GiB</td>
+<td style="text-align: right;">12 GiB</td>
+<td style="text-align: right;">13 GiB</td>
+</tr>
+<tr>
+<td>KV cache (CPU)</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><strong>3 GiB</strong></td>
+</tr>
+<tr>
+<td>nvidia-smi 进程占用</td>
+<td style="text-align: right;">22486 MiB</td>
+<td style="text-align: right;">27004 MiB</td>
+<td style="text-align: right;"><strong>31484 MiB</strong></td>
+<td style="text-align: right;">31052 MiB</td>
+</tr>
+<tr>
+<td>nvidia-smi 32G 占比</td>
+<td style="text-align: right;">69%</td>
+<td style="text-align: right;">83%</td>
+<td style="text-align: right;"><strong>97%</strong></td>
+<td style="text-align: right;">95%</td>
+</tr>
+<tr>
+<td>Prompt Prefill（8K）</td>
+<td style="text-align: right;">2580 tok/s</td>
+<td style="text-align: right;">2650 tok/s</td>
+<td style="text-align: right;">2597 tok/s</td>
+<td style="text-align: right;">535 tok/s</td>
+</tr>
+<tr>
+<td>Decode 中位</td>
+<td style="text-align: right;">~56 tok/s</td>
+<td style="text-align: right;">~58 tok/s</td>
+<td style="text-align: right;">~52 tok/s</td>
+<td style="text-align: right;">~7 tok/s</td>
+</tr>
+<tr>
+<td>MTP acceptance 平均</td>
+<td style="text-align: right;">0.50</td>
+<td style="text-align: right;">0.55</td>
+<td style="text-align: right;">0.46</td>
+<td style="text-align: right;">0.53</td>
+</tr>
+</tbody>
+</table>
+<h3>0.4 启动配置（推荐 192K）</h3>
+<div class="codehilite"><pre><span></span><code><span class="nv">OLLAMA_CONTEXT_LENGTH</span><span class="o">=</span><span class="m">196608</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_DEBUG</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_FLASH_ATTENTION</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_KEEP_ALIVE</span><span class="o">=</span>-1<span class="w"> </span><span class="se">\</span>
+ollama<span class="w"> </span>serve
+</code></pre></div>
+
+<p>启动参数（4 份 log 共有命令）：</p>
+<div class="codehilite"><pre><span></span><code><span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="k">type</span><span class="w"> </span><span class="nx">draft</span><span class="o">-</span><span class="nx">mtp</span>
+<span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="nx">draft</span><span class="o">-</span><span class="nx">n</span><span class="o">-</span><span class="nx">max</span><span class="w"> </span><span class="mi">4</span>
+<span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="nx">draft</span><span class="o">-</span><span class="nx">backend</span><span class="o">-</span><span class="nx">sampling</span>
+<span class="o">--</span><span class="nx">flash</span><span class="o">-</span><span class="nx">attn</span><span class="w"> </span><span class="kt">auto</span>
+<span class="o">-</span><span class="nx">b</span><span class="w"> </span><span class="mi">512</span><span class="w"> </span><span class="o">-</span><span class="nx">ub</span><span class="w"> </span><span class="mi">512</span>
+<span class="o">--</span><span class="nx">context</span><span class="o">-</span><span class="nx">shift</span><span class="w"> </span><span class="o">--</span><span class="nx">keep</span><span class="w"> </span><span class="mi">4</span>
+</code></pre></div>
+
+<blockquote>
+<p>各档推荐的详细依据见第 11 节"推荐档位"，完整证据链见第 12 节"结论"。</p>
+</blockquote>
+<hr />
+<h2>TL;DR</h2>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>log 直接读到的事实</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>64K</strong></td>
+<td><code>offloaded 66/66 layers to GPU</code>，runner.size == runner.vram == 16.3 GiB，KV 4 GiB（100% GPU）</td>
+</tr>
+<tr>
+<td><strong>128K</strong></td>
+<td><code>offloaded 66/66 layers to GPU</code>，runner.size == runner.vram == 16.6 GiB，KV 8 GiB（100% GPU）</td>
+</tr>
+<tr>
+<td><strong>192K</strong></td>
+<td><code>offloaded 66/66 layers to GPU</code>，runner.size == runner.vram == 17.0 GiB，KV 12 GiB（100% GPU）</td>
+</tr>
+<tr>
+<td><strong>256K</strong></td>
+<td><strong><code>offloaded 54/66 layers to GPU</code></strong>，runner.vram = 14.5 GiB ≠ runner.size = 21.2 GiB，KV 13 GiB GPU + 3 GiB CPU</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>192K 是 64K / 128K / 192K 三档里 <code>runner.size == runner.vram</code> 的<strong>最大档</strong>。256K 跑不出这个等式。</p>
+</blockquote>
+<hr />
+<h2>1. 数据来源与可信度</h2>
+<table>
+<thead>
+<tr>
+<th>文档</th>
+<th style="text-align: right;">大小</th>
+<th>内容</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ollama64k.log</code></td>
+<td style="text-align: right;">190,584 B</td>
+<td>Ollama 0.32.15 DEBUG 全量日志</td>
+<td>64K 档完整证据链</td>
+</tr>
+<tr>
+<td><code>ollama128k.log</code></td>
+<td style="text-align: right;">205,328 B</td>
+<td>同上</td>
+<td>128K 档完整证据链</td>
+</tr>
+<tr>
+<td><code>ollama192k.log</code></td>
+<td style="text-align: right;">162,428 B</td>
+<td>同上</td>
+<td>192K 档完整证据链</td>
+</tr>
+<tr>
+<td><code>ollama256k.log</code></td>
+<td style="text-align: right;">63,861 B</td>
+<td>同上（最薄，fit 阶段报错 + KV 拆分）</td>
+<td>256K 档 offload 证据</td>
+</tr>
+<tr>
+<td><code>新建文本文档.txt</code></td>
+<td style="text-align: right;">2,048 B</td>
+<td><code>ollama ps</code> ×4 + <code>nvidia-smi</code> ×1</td>
+<td>运行时实时验证</td>
+</tr>
+<tr>
+<td><code>64k.png</code></td>
+<td style="text-align: right;">11,714 B</td>
+<td>64K 档 nvidia-smi 截图</td>
+<td>VRAM/PID/状态实时验证</td>
+</tr>
+<tr>
+<td><code>128k.png</code></td>
+<td style="text-align: right;">10,456 B</td>
+<td>128K 档 nvidia-smi 截图</td>
+<td>VRAM/PID/状态实时验证</td>
+</tr>
+<tr>
+<td><code>192k.png</code></td>
+<td style="text-align: right;">9,912 B</td>
+<td>192K 档 nvidia-smi 截图</td>
+<td>VRAM/PID/状态实时验证</td>
+</tr>
+<tr>
+<td><code>256k.png</code></td>
+<td style="text-align: right;">8,852 B</td>
+<td>256K 档 nvidia-smi 截图</td>
+<td>VRAM/PID/状态实时验证</td>
+</tr>
+</tbody>
+</table>
+<p>证据强度：</p>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>log 完整性</th>
+<th>实时 ollama ps 验证</th>
+<th>实时 nvidia-smi 验证（独立 PNG）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td>✅ 多 task 完整</td>
+<td>✅ 17 GB / 100% GPU</td>
+<td>✅ 22486 MiB / 0% util / 5W / 40°C</td>
+</tr>
+<tr>
+<td>128K</td>
+<td>✅ 多 task 完整</td>
+<td>✅ 17 GB / 100% GPU</td>
+<td>✅ 27014 MiB / 71% util / 459W / 47°C</td>
+</tr>
+<tr>
+<td>192K</td>
+<td>✅ 多 task 完整</td>
+<td>✅ 18 GB / 100% GPU</td>
+<td>✅ 31494 MiB / 63% util / 472W / 59°C</td>
+</tr>
+<tr>
+<td>256K</td>
+<td>✅ offload 触发完整</td>
+<td>✅ 22 GB / 32%-68% CPU/GPU</td>
+<td>✅ 31062 MiB / 0% util / 86W / 35°C</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>2. 硬件与系统（直接读 log + nvidia-smi）</h2>
+<h3>2.1 来自 4 份 ollama log 的环境声明</h3>
+<div class="codehilite"><pre><span></span><code># 出现于 4 份 log 的 routes.go:2058 / sched.go:620
+total_vram = 31.4 GiB
+available  = 30.4 GiB
+free       = 30.9 GiB
+
+# 4 份 log 各自的 sched.go:613
+system memory total = 503.5 GiB
+system memory free  = 397.3 ~ 402.4 GiB   # 跨 4 份 log 范围
+</code></pre></div>
+
+<h3>2.2 来自 <code>新建文本文档.txt</code> 末尾的 nvidia-smi 实时输出</h3>
+<div class="codehilite"><pre><span></span><code>NVIDIA-SMI 570.195.03     Driver Version: 570.195.03     CUDA Version: 12.8
+GPU  Name        : NVIDIA GeForce RTX 5090
+Memory-Usage     : 22536 MiB / 32607 MiB
+GPU-Util         : 64%
+Pwr:Usage/Cap    : 442W / 600W
+Temp             : 57°C
+Process          : ollama llama-server 占 22536 MiB
+</code></pre></div>
+
+<blockquote>
+<p>文档原文未提供带宽 / TDP 详细规格的实测数据，本报告不引入未在文档中出现的硬件规格数字。</p>
+</blockquote>
+<hr />
+<h2>3. 资源分布（4 档 log 直接读出）</h2>
+<h3>3.1 加载层数与 Offload</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>log 行</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td><code>load_tensors: offloaded 66/66 layers to GPU</code></td>
+<td>全部在 GPU</td>
+</tr>
+<tr>
+<td>128K</td>
+<td><code>load_tensors: offloaded 66/66 layers to GPU</code></td>
+<td>全部在 GPU</td>
+</tr>
+<tr>
+<td>192K</td>
+<td><code>load_tensors: offloaded 66/66 layers to GPU</code></td>
+<td>全部在 GPU</td>
+</tr>
+<tr>
+<td>256K</td>
+<td><code>load_tensors: offloaded 54/66 layers to GPU</code></td>
+<td><strong>12 层 offload</strong></td>
+</tr>
+</tbody>
+</table>
+<p>256K 触发的 fit 错误原文：</p>
+<div class="codehilite"><pre><span></span><code>common_params_fit_impl:
+  cannot meet free memory target of 1936 MiB,
+  need to reduce device memory by 3924 MiB
+</code></pre></div>
+
+<blockquote>
+<p>该错误原文<strong>仅出现在 ollama256k.log</strong>。前 3 档 log 中是 <code>will leave XXXX &gt;= 1936 MiB of free device memory, no changes needed</code>。</p>
+</blockquote>
+<h3>3.2 runner.size / runner.vram</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th style="text-align: right;">runner.size</th>
+<th style="text-align: right;">runner.vram</th>
+<th>size == vram？</th>
+<th>解读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td style="text-align: right;">16.3 GiB</td>
+<td style="text-align: right;">16.3 GiB</td>
+<td>✅</td>
+<td>模型 + KV 全部在 VRAM</td>
+</tr>
+<tr>
+<td>128K</td>
+<td style="text-align: right;">16.6 GiB</td>
+<td style="text-align: right;">16.6 GiB</td>
+<td>✅</td>
+<td>模型 + KV 全部在 VRAM</td>
+</tr>
+<tr>
+<td>192K</td>
+<td style="text-align: right;">17.0 GiB</td>
+<td style="text-align: right;">17.0 GiB</td>
+<td>✅</td>
+<td>模型 + KV 全部在 VRAM</td>
+</tr>
+<tr>
+<td>256K</td>
+<td style="text-align: right;">21.2 GiB</td>
+<td style="text-align: right;">14.5 GiB</td>
+<td>❌</td>
+<td>runner.size 包含 CPU 端 KV 3 GiB + CPU 端 model 3.4 GiB</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>192K 是 <code>size == vram</code> 的<strong>最大档</strong>。</p>
+</blockquote>
+<h3>3.3 KV cache 拆分</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th style="text-align: right;">KV GPU</th>
+<th style="text-align: right;">KV CPU</th>
+<th style="text-align: right;">KV total</th>
+<th>来源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td style="text-align: right;">4096 MiB</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">4096 MiB</td>
+<td><code>llama_kv_cache: size = 4096.00 MiB (65536 cells, 16 layers, 1/1 seqs)</code></td>
+</tr>
+<tr>
+<td>128K</td>
+<td style="text-align: right;">8192 MiB</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">8192 MiB</td>
+<td><code>llama_kv_cache: size = 8192.00 MiB (131072 cells, 16 layers, 1/1 seqs)</code></td>
+</tr>
+<tr>
+<td>192K</td>
+<td style="text-align: right;">12288 MiB</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">12288 MiB</td>
+<td><code>llama_kv_cache: size = 12288.00 MiB (196608 cells, 16 layers, 1/1 seqs)</code></td>
+</tr>
+<tr>
+<td>256K</td>
+<td style="text-align: right;">13312 MiB</td>
+<td style="text-align: right;">3072 MiB</td>
+<td style="text-align: right;">16384 MiB</td>
+<td><code>llama_kv_cache: size = 16384.00 MiB (262144 cells, 16 layers, 1/1 seqs)</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>256K 出现 <code>CPU KV buffer size = 3072.00 MiB</code> 是前 3 档 log 中<strong>完全没有的字段</strong>。</p>
+</blockquote>
+<h3>3.4 CPU 端 model mmap</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th style="text-align: right;">CPU_Mapped model buffer</th>
+<th>解读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td style="text-align: right;">682 MiB</td>
+<td>mmap 正常值</td>
+</tr>
+<tr>
+<td>128K</td>
+<td style="text-align: right;">682 MiB</td>
+<td>mmap 正常值</td>
+</tr>
+<tr>
+<td>192K</td>
+<td style="text-align: right;">682 MiB</td>
+<td>mmap 正常值</td>
+</tr>
+<tr>
+<td>256K</td>
+<td style="text-align: right;"><strong>3423 MiB</strong></td>
+<td>mmap 涨 5×（与 12 层 offload 一致）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>4. Prompt Prefill（log 原数据）</h2>
+<h3>4.1 各档 Prefill 抽样</h3>
+<div class="codehilite"><pre><span></span><code><span class="mf">64</span><span class="n">K</span><span class="w">  </span><span class="p">(</span><span class="n">ollama64k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">   </span><span class="mf">8192</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2580.61</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">10240</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2578.08</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">16887</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2366.94</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">360</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">65134</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2077.00</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">15</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">18964</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2381.21</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">6565</span><span class="p">)</span>
+
+<span class="mf">128</span><span class="n">K</span><span class="w"> </span><span class="p">(</span><span class="n">ollama128k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">   </span><span class="mf">8192</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2650.53</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">10240</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2630.44</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">14436</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2322.21</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">13</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">18625</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2245.98</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">140</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">57854</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">1776.81</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">12176</span><span class="p">)</span>
+
+<span class="mf">192</span><span class="n">K</span><span class="w"> </span><span class="p">(</span><span class="n">ollama192k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">   </span><span class="mf">8192</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2597.37</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">10240</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">2584.78</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">78210</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">1871.37</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">0</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">92742</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">1779.82</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">4478</span><span class="p">)</span>
+
+<span class="mf">256</span><span class="n">K</span><span class="w"> </span><span class="p">(</span><span class="n">ollama256k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">   </span><span class="mf">2048</span><span class="w">  </span><span class="err">→</span><span class="w">  </span><span class="mf">534.67</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">   </span><span class="mf">4096</span><span class="w">  </span><span class="err">→</span><span class="w">  </span><span class="mf">517.47</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span>
+<span class="w">  </span><span class="n">n_tokens</span><span class="w">  </span><span class="mf">16896</span><span class="w">  </span><span class="err">→</span><span class="w">  </span><span class="mf">511.24</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">task</span><span class="w"> </span><span class="mf">16</span><span class="p">)</span>
+</code></pre></div>
+
+<h3>4.2 Prefill 跨档对比</h3>
+<table>
+<thead>
+<tr>
+<th>Prompt 规模</th>
+<th style="text-align: right;">64K</th>
+<th style="text-align: right;">128K</th>
+<th style="text-align: right;">192K</th>
+<th style="text-align: right;">256K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8K</td>
+<td style="text-align: right;">2580</td>
+<td style="text-align: right;">2650</td>
+<td style="text-align: right;">2597</td>
+<td style="text-align: right;">535</td>
+</tr>
+<tr>
+<td>16K</td>
+<td style="text-align: right;">2366</td>
+<td style="text-align: right;">2245</td>
+<td style="text-align: right;">1871</td>
+<td style="text-align: right;">511</td>
+</tr>
+<tr>
+<td>65K-78K</td>
+<td style="text-align: right;">2077</td>
+<td style="text-align: right;">1776</td>
+<td style="text-align: right;">1871</td>
+<td style="text-align: right;">—</td>
+</tr>
+<tr>
+<td>92K</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">1779</td>
+<td style="text-align: right;">—</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>64K / 128K / 192K 三档 Prefill 8K prompt 都在 <strong>2580-2650 tok/s</strong> 区间，差异 &lt; 3%。<br />
+256K 同一规模掉到 <strong>511-535 tok/s</strong>，约为前三档的 1/5。</p>
+</blockquote>
+<hr />
+<h2>5. Decode（log 原数据）</h2>
+<h3>5.1 各档 Decode 抽样</h3>
+<div class="codehilite"><pre><span></span><code><span class="mf">64</span><span class="n">K</span><span class="w">  </span><span class="p">(</span><span class="n">ollama64k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">0</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="mf">11</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">46</span><span class="w"> </span><span class="n">gen</span><span class="w">   </span><span class="err">→</span><span class="w"> </span><span class="mf">64.40</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.77</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">15</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mf">65134</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">399</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">48.23</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">  </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.36</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">310</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">136</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">163</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">66.84</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.63</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">360</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">16887</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">1051</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">52.19</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w"> </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.41</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">796</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">875</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">904</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">57.86</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.48</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">1111</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mf">527</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">213</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">56.22</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.47</span><span class="p">)</span>
+
+<span class="mf">128</span><span class="n">K</span><span class="w"> </span><span class="p">(</span><span class="n">ollama128k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">13</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mf">14436</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">296</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">59.30</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">  </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.53</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">140</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">18625</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">1867</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">52.27</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w"> </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.41</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">891</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">1634</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">7462</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">54.32</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">  </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.43</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">3640</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mf">7583</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">2977</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">84.75</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">  </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.81</span><span class="p">)</span><span class="w">  </span><span class="err">←</span><span class="w"> </span><span class="mf">128</span><span class="n">K</span><span class="w"> </span><span class="n">峰值</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">4358</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mf">329</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">408</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">68.05</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.62</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">4479</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="mf">3957</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">526</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">57.95</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.48</span><span class="p">)</span>
+
+<span class="mf">192</span><span class="n">K</span><span class="w"> </span><span class="p">(</span><span class="n">ollama192k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">0</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="mf">78210</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">718</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="mf">63.40</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">  </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.56</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">378</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">168</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">869</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">66.38</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.60</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">638</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">492</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">251</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">46.44</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.34</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">747</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">548</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">164</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">49.58</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.39</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">815</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">518</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">191</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">49.48</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.38</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">896</span><span class="w">  </span><span class="p">:</span><span class="w"> </span><span class="mf">191</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">161</span><span class="w"> </span><span class="n">gen</span><span class="w">  </span><span class="err">→</span><span class="w"> </span><span class="mf">54.49</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.45</span><span class="p">)</span>
+
+<span class="mf">256</span><span class="n">K</span><span class="w"> </span><span class="p">(</span><span class="n">ollama256k</span><span class="mf">.</span><span class="nb">log</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">0</span><span class="w">    </span><span class="p">:</span><span class="w"> </span><span class="mf">11</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">42</span><span class="w"> </span><span class="n">gen</span><span class="w">    </span><span class="err">→</span><span class="w">  </span><span class="mf">9.78</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w">   </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.62</span><span class="p">)</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="mf">16</span><span class="w">   </span><span class="p">:</span><span class="w"> </span><span class="mf">16900</span><span class="w"> </span><span class="n">prompt</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">1105</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="err">→</span><span class="w">  </span><span class="mf">5.48</span><span class="w"> </span><span class="kr">to</span><span class="n">k</span><span class="o">/</span><span class="n">s</span><span class="w"> </span><span class="p">(</span><span class="n">draft</span><span class="w"> </span><span class="mf">0.44</span><span class="p">)</span>
+</code></pre></div>
+
+<h3>5.2 Decode 跨档对比</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>Decode 范围</th>
+<th style="text-align: right;">log 中位数（粗估）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td>48 - 67 tok/s</td>
+<td style="text-align: right;">~56</td>
+</tr>
+<tr>
+<td>128K</td>
+<td>52 - 85 tok/s</td>
+<td style="text-align: right;">~58</td>
+</tr>
+<tr>
+<td>192K</td>
+<td>46 - 66 tok/s</td>
+<td style="text-align: right;">~52</td>
+</tr>
+<tr>
+<td>256K</td>
+<td>5 - 10 tok/s</td>
+<td style="text-align: right;">~7</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>64K / 128K / 192K 三档 Decode 中位数差异 &lt; 10%。<br />
+256K 中位数掉到前三档的约 1/8。</p>
+</blockquote>
+<hr />
+<h2>6. MTP / Draft Acceptance</h2>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>log 中 draft acceptance 范围</th>
+<th style="text-align: right;">平均</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td>0.36 - 0.77</td>
+<td style="text-align: right;">~0.50</td>
+<td>短 prompt 接受率高（0.77），长 prompt 接受率低（0.36）</td>
+</tr>
+<tr>
+<td>128K</td>
+<td>0.40 - 0.81</td>
+<td style="text-align: right;">~0.55</td>
+<td>task 3640 峰值 0.81</td>
+</tr>
+<tr>
+<td>192K</td>
+<td>0.34 - 0.60</td>
+<td style="text-align: right;">~0.46</td>
+<td>略低于 64K / 128K</td>
+</tr>
+<tr>
+<td>256K</td>
+<td>0.44 - 0.62</td>
+<td style="text-align: right;">~0.53</td>
+<td>offload 不影响 MTP 接受率</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>7. 实时验证（来自 <code>新建文本文档.txt</code>）</h2>
+<h3>7.1 <code>ollama ps</code> 4 档实时输出</h3>
+<div class="codehilite"><pre><span></span><code><span class="nv">NAME</span><span class="w">           </span><span class="nv">ID</span><span class="w">              </span><span class="nv">SIZE</span><span class="w">     </span><span class="nv">PROCESSOR</span><span class="w">          </span><span class="nv">CONTEXT</span><span class="w">    </span><span class="k">UNTIL</span>
+<span class="nv">qwen3</span>.<span class="mi">8</span>:<span class="mi">27</span><span class="nv">b</span><span class="w">    </span><span class="mi">22130167</span><span class="nv">c4c2</span><span class="w">    </span><span class="mi">17</span><span class="w"> </span><span class="nv">GB</span><span class="w">    </span><span class="mi">100</span><span class="o">%</span><span class="w"> </span><span class="nv">GPU</span><span class="w">           </span><span class="mi">65536</span><span class="w">      </span><span class="nv">Forever</span>
+<span class="nv">qwen3</span>.<span class="mi">8</span>:<span class="mi">27</span><span class="nv">b</span><span class="w">    </span><span class="mi">22130167</span><span class="nv">c4c2</span><span class="w">    </span><span class="mi">17</span><span class="w"> </span><span class="nv">GB</span><span class="w">    </span><span class="mi">100</span><span class="o">%</span><span class="w"> </span><span class="nv">GPU</span><span class="w">           </span><span class="mi">131072</span><span class="w">     </span><span class="nv">Forever</span>
+<span class="nv">qwen3</span>.<span class="mi">8</span>:<span class="mi">27</span><span class="nv">b</span><span class="w">    </span><span class="mi">22130167</span><span class="nv">c4c2</span><span class="w">    </span><span class="mi">18</span><span class="w"> </span><span class="nv">GB</span><span class="w">    </span><span class="mi">100</span><span class="o">%</span><span class="w"> </span><span class="nv">GPU</span><span class="w">           </span><span class="mi">196608</span><span class="w">     </span><span class="nv">Forever</span>
+<span class="nv">qwen3</span>.<span class="mi">8</span>:<span class="mi">27</span><span class="nv">b</span><span class="w">    </span><span class="mi">22130167</span><span class="nv">c4c2</span><span class="w">    </span><span class="mi">22</span><span class="w"> </span><span class="nv">GB</span><span class="w">    </span><span class="mi">32</span><span class="o">%/</span><span class="mi">68</span><span class="o">%</span><span class="w"> </span><span class="nv">CPU</span><span class="o">/</span><span class="nv">GPU</span><span class="w">    </span><span class="mi">262144</span><span class="w">     </span><span class="nv">Forever</span>
+</code></pre></div>
+
+<h3>7.2 跨档 <code>ollama ps</code> SIZE 解读</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th style="text-align: right;">ollama ps SIZE</th>
+<th>含义（基于 ollama 行为约定）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td style="text-align: right;">17 GB</td>
+<td>模型 + KV（GPU 端）总占用</td>
+</tr>
+<tr>
+<td>128K</td>
+<td style="text-align: right;">17 GB</td>
+<td>模型 + KV 仍 &lt; 17 GB（KV 增 4 GB 被吸收）</td>
+</tr>
+<tr>
+<td>192K</td>
+<td style="text-align: right;">18 GB</td>
+<td>KV 增 4 GB 反映出来</td>
+</tr>
+<tr>
+<td>256K</td>
+<td style="text-align: right;">22 GB</td>
+<td>模型 12.6 + KV 13 + mmap 3.4 - 已 offload 部分在 CPU</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>256K 的 22 GB 反映的是<strong>总分配</strong>（GPU + CPU 端 model mmap + CPU 端 KV），不是 GPU 端单边占用。<br />
+与 log 中 <code>runner.size = 21.2 GiB</code>（含 CPU 端）一致。</p>
+</blockquote>
+<h3>7.3 256K 进程比 32%/68% 拆解</h3>
+<div class="codehilite"><pre><span></span><code>ollama ps:        32% CPU / 68% GPU
+runner.size:      21.2 GiB (总，含 CPU 端)
+runner.vram:      14.5 GiB (GPU 端)
+CPU Mapped model: 3.4 GiB
+CPU KV:           3.0 GiB
+</code></pre></div>
+
+<blockquote>
+<p>数字交叉验证：14.5 / 21.2 ≈ 68% GPU，符合 ollama ps 的 68% GPU 比例。</p>
+</blockquote>
+<h3>7.4 4 档 nvidia-smi 实时截图</h3>
+<p>来自 <code>64k.png</code> / <code>128k.png</code> / <code>192k.png</code> / <code>256k.png</code> 四张截图（每张对应一个 num_ctx 档位在跑期间的实时状态）。</p>
+<h4>7.4.1 64K（截图时间 14:30:15，PID 16322，idle 状态）</h4>
+<p><img alt="64K nvidia-smi" src="64k.png" /></p>
+<div class="codehilite"><pre><span></span><code>Memory-Usage  : 22486 MiB / 32607 MiB
+GPU-Util      : 0%
+Pwr:Usage/Cap : 5W / 600W
+Temp          : 40°C
+Process       : ollama llama-server PID 16322 占 22486 MiB
+</code></pre></div>
+
+<h4>7.4.2 128K（截图时间 14:12:44，PID 9698，active 状态）</h4>
+<p><img alt="128K nvidia-smi" src="128k.png" /></p>
+<div class="codehilite"><pre><span></span><code>Memory-Usage  : 27014 MiB / 32607 MiB
+GPU-Util      : 71%
+Pwr:Usage/Cap : 459W / 600W
+Temp          : 47°C
+Process       : ollama llama-server PID 9698 占 27004 MiB
+</code></pre></div>
+
+<h4>7.4.3 192K（截图时间 14:20:53，PID 13651，active 状态）</h4>
+<p><img alt="192K nvidia-smi" src="192k.png" /></p>
+<div class="codehilite"><pre><span></span><code>Memory-Usage  : 31494 MiB / 32607 MiB
+GPU-Util      : 63%
+Pwr:Usage/Cap : 472W / 600W
+Temp          : 59°C
+Process       : ollama llama-server PID 13651 占 31484 MiB
+</code></pre></div>
+
+<h4>7.4.4 256K（截图时间 13:59:50，PID 7466，idle 状态）</h4>
+<p><img alt="256K nvidia-smi" src="256k.png" /></p>
+<div class="codehilite"><pre><span></span><code>Memory-Usage  : 31062 MiB / 32607 MiB
+GPU-Util      : 0%
+Pwr:Usage/Cap : 86W / 600W
+Temp          : 35°C
+Process       : ollama llama-server PID 7466 占 31052 MiB
+</code></pre></div>
+
+<h4>7.4.5 4 档 nvidia-smi 跨档对比</h4>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>截图时间</th>
+<th style="text-align: right;">PID</th>
+<th style="text-align: right;">进程占 VRAM</th>
+<th style="text-align: right;">VRAM 总量</th>
+<th style="text-align: right;">占用率</th>
+<th style="text-align: right;">GPU-Util</th>
+<th style="text-align: right;">功耗</th>
+<th style="text-align: right;">温度</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td>14:30:15</td>
+<td style="text-align: right;">16322</td>
+<td style="text-align: right;">22486 MiB</td>
+<td style="text-align: right;">22486 / 32607</td>
+<td style="text-align: right;">69%</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">5W</td>
+<td style="text-align: right;">40°C</td>
+<td>idle</td>
+</tr>
+<tr>
+<td>128K</td>
+<td>14:12:44</td>
+<td style="text-align: right;">9698</td>
+<td style="text-align: right;">27004 MiB</td>
+<td style="text-align: right;">27014 / 32607</td>
+<td style="text-align: right;">83%</td>
+<td style="text-align: right;">71%</td>
+<td style="text-align: right;">459W</td>
+<td style="text-align: right;">47°C</td>
+<td>active</td>
+</tr>
+<tr>
+<td>192K</td>
+<td>14:20:53</td>
+<td style="text-align: right;">13651</td>
+<td style="text-align: right;">31484 MiB</td>
+<td style="text-align: right;">31494 / 32607</td>
+<td style="text-align: right;"><strong>97%</strong></td>
+<td style="text-align: right;">63%</td>
+<td style="text-align: right;">472W</td>
+<td style="text-align: right;">59°C</td>
+<td>active</td>
+</tr>
+<tr>
+<td>256K</td>
+<td>13:59:50</td>
+<td style="text-align: right;">7466</td>
+<td style="text-align: right;">31052 MiB</td>
+<td style="text-align: right;">31062 / 32607</td>
+<td style="text-align: right;">95%</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">86W</td>
+<td style="text-align: right;">35°C</td>
+<td>idle</td>
+</tr>
+</tbody>
+</table>
+<h4>7.4.6 关键观察</h4>
+<ol>
+<li>
+<p><strong>PID 完美对得上 log</strong>：4 档截图的 PID 与 4 份 log 中 <code>runner.pid</code> 字段完全一致（16322 / 9698 / 13651 / 7466）。</p>
+</li>
+<li>
+<p><strong>192K 是实际 VRAM 占用率最高的档</strong>（nvidia-smi 显示 97%），但 log 中 <code>runner.vram</code> 仅 17.0 GiB（53%）—— 真实 VRAM 占用是 ollama runner 自报的 1.86 倍。</p>
+</li>
+<li>
+<p><strong>256K idle 功耗 86W</strong>，是 64K idle（5W）的 17 倍——CPU Offload 让 GPU 持续有背景负载。</p>
+</li>
+<li>
+<p><strong>128K / 192K 处于 active 状态</strong>（GPU-Util 71% / 63%），64K / 256K 截图时是 idle（GPU-Util 0%）。</p>
+</li>
+</ol>
+<h4>7.4.7 nvidia-smi 进程占用 vs log runner.vram 差值</h4>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th style="text-align: right;">nvidia-smi 进程占用</th>
+<th style="text-align: right;">log runner.vram</th>
+<th style="text-align: right;">差值</th>
+<th style="text-align: right;">差值占比</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td style="text-align: right;">22486 MiB</td>
+<td style="text-align: right;">16.3 GiB (17086 MiB)</td>
+<td style="text-align: right;"><strong>+5400 MiB</strong></td>
+<td style="text-align: right;">+32%</td>
+</tr>
+<tr>
+<td>128K</td>
+<td style="text-align: right;">27004 MiB</td>
+<td style="text-align: right;">16.6 GiB (17408 MiB)</td>
+<td style="text-align: right;"><strong>+9596 MiB</strong></td>
+<td style="text-align: right;">+55%</td>
+</tr>
+<tr>
+<td>192K</td>
+<td style="text-align: right;">31484 MiB</td>
+<td style="text-align: right;">17.0 GiB (17826 MiB)</td>
+<td style="text-align: right;"><strong>+13658 MiB</strong></td>
+<td style="text-align: right;">+77%</td>
+</tr>
+<tr>
+<td>256K</td>
+<td style="text-align: right;">31052 MiB</td>
+<td style="text-align: right;">14.5 GiB (15204 MiB)</td>
+<td style="text-align: right;"><strong>+15848 MiB</strong></td>
+<td style="text-align: right;">+104%</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>差值<strong>随 context 增长而线性增长</strong>。这部分 ollama runner 未自报，但 nvidia-smi 看到。<br />
+推测是 <strong>CUDA working set</strong>（cuBLAS workspaces + MTP draft 上下文 + 跨请求累积的 KV 缓存）—— 该推测<strong>不在本文档范围内</strong>，仅作观察记录。<br />
+192K 占用率达 97%，接近 32GB 物理上限；继续放大 context 必须先消化这部分 working set。</p>
+</blockquote>
+<hr />
+<h2>8. 模型与量化（来自 4 份 log 共有元信息）</h2>
+<div class="codehilite"><pre><span></span><code>general.architecture     = qwen35
+general.name             = Qwen3.8 27B 0814
+general.quantization_version = 2
+general.file_type        = 15
+n_layer / n_layer_all    = 64 / 65
+print_info: model params = 27.32 B
+print_info: n_ctx_train  = 262144
+
+# tensor 分布
+f32  : 360 tensors
+q4_K : 439 tensors
+q6_K :  67 tensors
+
+# 启动命令（4 份 log 共有）
+cmd=&quot;... --spec-type draft-mtp --spec-draft-n-max 4
+     --spec-draft-backend-sampling --flash-attn auto
+     -b 512 -ub 512 --context-shift --keep 4&quot;
+
+# ollama ps 显示的 model ID
+ID = 22130167c4c2
+</code></pre></div>
+
+<blockquote>
+<p>4 份 log 的元信息完全一致，确认 4 档测试用的是同一个模型实例配置。</p>
+</blockquote>
+<hr />
+<h2>9. 模型初始化（来自 ollama64k.log，4 份共有）</h2>
+<div class="codehilite"><pre><span></span><code>llama_model_loader: loaded meta data with 42 key-value pairs and 866 tensors
+load: special tokens cache size = 33
+print_info: n_layer               = 64
+print_info: n_layer_all           = 65
+print_info: n_head                = 24
+print_info: n_head_kv             = 4
+print_info: f_norm_rms_eps        = 1.0e-06
+print_info: model params          = 27.32 B
+</code></pre></div>
+
+<hr />
+<h2>10. 跨档对比一览（仅基于 4 份 log 的事实）</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>64K</th>
+<th style="text-align: right;">128K</th>
+<th style="text-align: right;">192K</th>
+<th style="text-align: right;">256K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>num_ctx</td>
+<td>65536</td>
+<td style="text-align: right;">131072</td>
+<td style="text-align: right;">196608</td>
+<td style="text-align: right;">262144</td>
+</tr>
+<tr>
+<td>加载层数</td>
+<td>66/66 GPU</td>
+<td style="text-align: right;">66/66 GPU</td>
+<td style="text-align: right;">66/66 GPU</td>
+<td style="text-align: right;">54/66 GPU</td>
+</tr>
+<tr>
+<td>runner.vram</td>
+<td>16.3 GiB</td>
+<td style="text-align: right;">16.6 GiB</td>
+<td style="text-align: right;">17.0 GiB</td>
+<td style="text-align: right;">14.5 GiB</td>
+</tr>
+<tr>
+<td>KV cache GPU</td>
+<td>4 GiB</td>
+<td style="text-align: right;">8 GiB</td>
+<td style="text-align: right;">12 GiB</td>
+<td style="text-align: right;">13 GiB</td>
+</tr>
+<tr>
+<td>KV cache CPU</td>
+<td>0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">3 GiB</td>
+</tr>
+<tr>
+<td><code>size == vram</code></td>
+<td>✅</td>
+<td style="text-align: right;">✅</td>
+<td style="text-align: right;">✅</td>
+<td style="text-align: right;">❌</td>
+</tr>
+<tr>
+<td>Prefill 8K</td>
+<td>2580</td>
+<td style="text-align: right;">2650</td>
+<td style="text-align: right;">2597</td>
+<td style="text-align: right;">535</td>
+</tr>
+<tr>
+<td>Prefill 16K</td>
+<td>2366</td>
+<td style="text-align: right;">2245</td>
+<td style="text-align: right;">1871</td>
+<td style="text-align: right;">511</td>
+</tr>
+<tr>
+<td>Decode 中位</td>
+<td>~56</td>
+<td style="text-align: right;">~58</td>
+<td style="text-align: right;">~52</td>
+<td style="text-align: right;">~7</td>
+</tr>
+<tr>
+<td>Decode 范围</td>
+<td>48-67</td>
+<td style="text-align: right;">52-85</td>
+<td style="text-align: right;">46-66</td>
+<td style="text-align: right;">5-10</td>
+</tr>
+<tr>
+<td>MTP acc 平均</td>
+<td>0.50</td>
+<td style="text-align: right;">0.55</td>
+<td style="text-align: right;">0.46</td>
+<td style="text-align: right;">0.53</td>
+</tr>
+<tr>
+<td><code>fit</code> 阶段报错</td>
+<td>无</td>
+<td style="text-align: right;">无</td>
+<td style="text-align: right;">无</td>
+<td style="text-align: right;"><strong>cannot meet free memory target</strong></td>
+</tr>
+<tr>
+<td>进程 PROCESSOR</td>
+<td>100% GPU</td>
+<td style="text-align: right;">100% GPU</td>
+<td style="text-align: right;">100% GPU</td>
+<td style="text-align: right;">32%/68% CPU/GPU</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>11. 推荐档位（基于 4 档实测数据归纳）</h2>
+<blockquote>
+<p>本节推荐<strong>完全基于前 10 章文档事实</strong>的归纳：4 档实测中 <code>size == vram</code> 的最大档 / Decode 中位数 / Prefill 范围 / 实际 VRAM 占用率。</p>
+</blockquote>
+<h3>11.1 4 档可用性归纳</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th style="text-align: right;">是否 100% GPU</th>
+<th style="text-align: right;">VRAM 占用率（nvidia-smi）</th>
+<th style="text-align: right;">Decode 中位</th>
+<th>综合评价（基于本批数据）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K</td>
+<td style="text-align: right;">✅</td>
+<td style="text-align: right;">69%</td>
+<td style="text-align: right;">~56 tok/s</td>
+<td>够用，但<strong>没用满 32G</strong></td>
+</tr>
+<tr>
+<td>128K</td>
+<td style="text-align: right;">✅</td>
+<td style="text-align: right;">83%</td>
+<td style="text-align: right;">~58 tok/s</td>
+<td>4 档中 Decode 中位最高</td>
+</tr>
+<tr>
+<td><strong>192K</strong></td>
+<td style="text-align: right;">✅</td>
+<td style="text-align: right;"><strong>97%</strong></td>
+<td style="text-align: right;">~52 tok/s</td>
+<td><strong>100% GPU 跑的最大档，VRAM 几乎贴满</strong></td>
+</tr>
+<tr>
+<td>256K</td>
+<td style="text-align: right;">❌ 32%/68%</td>
+<td style="text-align: right;">95%</td>
+<td style="text-align: right;">~7 tok/s</td>
+<td>触发 12 层 offload，Decode 跌到 1/8</td>
+</tr>
+</tbody>
+</table>
+<h3>11.2 推荐：192K（首要）</h3>
+<p><strong>依据（全部来自本批文档）</strong>：</p>
+<ol>
+<li>4 档 log 中 <code>runner.size == runner.vram</code> 的<strong>最大档</strong>（仅 192K / 128K / 64K 满足）</li>
+<li>实际 VRAM 占用率 97%，<strong>几乎用满 32GB</strong></li>
+<li><code>nvidia-smi</code> 占用 31494 MiB / 32607 MiB，比 128K 多 4.5 GiB 但<strong>仍在 100% GPU 范围内</strong></li>
+<li>Decode 中位 ~52 tok/s，与 64K / 128K 差异 &lt; 10%</li>
+<li>跑 <strong>78K prompt</strong> 实测仍 63.40 tok/s（task 0）</li>
+<li>MTP acceptance 0.46-0.60，与其他档相近</li>
+</ol>
+<p><strong>启动配置（来自 4 份 log 共有启动命令）</strong>：</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">OLLAMA_CONTEXT_LENGTH</span><span class="o">=</span><span class="m">196608</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_DEBUG</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_FLASH_ATTENTION</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">OLLAMA_KEEP_ALIVE</span><span class="o">=</span>-1<span class="w"> </span><span class="se">\</span>
+ollama<span class="w"> </span>serve
+</code></pre></div>
+
+<p>启动参数（log 原文）：</p>
+<div class="codehilite"><pre><span></span><code><span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="k">type</span><span class="w"> </span><span class="nx">draft</span><span class="o">-</span><span class="nx">mtp</span>
+<span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="nx">draft</span><span class="o">-</span><span class="nx">n</span><span class="o">-</span><span class="nx">max</span><span class="w"> </span><span class="mi">4</span>
+<span class="o">--</span><span class="nx">spec</span><span class="o">-</span><span class="nx">draft</span><span class="o">-</span><span class="nx">backend</span><span class="o">-</span><span class="nx">sampling</span>
+<span class="o">--</span><span class="nx">flash</span><span class="o">-</span><span class="nx">attn</span><span class="w"> </span><span class="kt">auto</span>
+<span class="o">-</span><span class="nx">b</span><span class="w"> </span><span class="mi">512</span><span class="w"> </span><span class="o">-</span><span class="nx">ub</span><span class="w"> </span><span class="mi">512</span>
+<span class="o">--</span><span class="nx">context</span><span class="o">-</span><span class="nx">shift</span><span class="w"> </span><span class="o">--</span><span class="nx">keep</span><span class="w"> </span><span class="mi">4</span>
+</code></pre></div>
+
+<h3>11.3 备选：128K（次要）</h3>
+<p><strong>适用场景（仅基于本批数据可推出的事实）</strong>：</p>
+<ol>
+<li>Decode 中位 ~58 tok/s，<strong>4 档中最高</strong></li>
+<li>VRAM 占用率 83%，<strong>比 192K 留更多余量</strong>（14% 缓冲）</li>
+<li><code>nvidia-smi</code> 占用 27014 MiB / 32607 MiB，比 192K 少 4.5 GiB</li>
+<li>task 3640 实测峰值 84.75 tok/s</li>
+</ol>
+<h3>11.4 不推荐：64K</h3>
+<p><strong>原因</strong>：</p>
+<ol>
+<li>192K 已经是 100% GPU 跑，<strong>64K 没有性能优势</strong>（Decode 中位 ~56 vs ~52）</li>
+<li>浪费 32G 显存优势（仅用 69%）</li>
+<li>实际跑 78K prompt 时 192K 仍 63 tok/s，64K 装不下</li>
+</ol>
+<h3>11.5 不推荐：256K</h3>
+<p><strong>原因</strong>：</p>
+<ol>
+<li><code>offloaded 54/66 layers to GPU</code>——<strong>12 层权重离开 VRAM</strong></li>
+<li><code>runner.vram = 14.5 GiB</code> ≠ <code>runner.size = 21.2 GiB</code>——资源分布结构性变化</li>
+<li><code>CPU KV buffer size = 3072.00 MiB</code>——新增 CPU 端 KV</li>
+<li>Decode 跌到 5-10 tok/s，<strong>约为 192K 的 1/8</strong></li>
+<li>nvidia-smi 占用 31062 MiB，<strong>与 192K 的 31494 MiB 几乎相同</strong>，但性能差距 8×</li>
+<li>idle 功耗 86W，是 64K idle（5W）的 17 倍</li>
+</ol>
+<h3>11.6 选择依据表</h3>
+<table>
+<thead>
+<tr>
+<th>你的需求</th>
+<th>推荐档位</th>
+<th>依据（来自本批数据）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>想用满 32G 显存</td>
+<td><strong>192K</strong></td>
+<td>VRAM 占用 97%</td>
+</tr>
+<tr>
+<td>想要最高 Decode 中位</td>
+<td><strong>128K</strong></td>
+<td>4 档中 Decode 中位最高</td>
+</tr>
+<tr>
+<td>想要最低 active 功耗</td>
+<td>64K</td>
+<td>active 截图缺失，idle 功耗 5W 最低</td>
+</tr>
+<tr>
+<td>prompt 经常 &gt;100K</td>
+<td>256K</td>
+<td>4 档中唯一能装 100K+ 的档，但 Decode 跌至 1/8</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 11.6 节中"你的需求"分类是<strong>基于本批数据可推出的事实</strong>做的归纳（VRAM 占用、Decode 中位、idle 功耗、prompt 上限），<strong>不引入文档外的业务场景假设</strong>。</p>
+</blockquote>
+<hr />
+<h2>12. 结论（仅基于上述文档）</h2>
+<blockquote>
+<p><strong>192K 是 4 档 log 中 <code>runner.size == runner.vram</code> 且 <code>offloaded 66/66 layers to GPU</code> 的最大档</strong>。</p>
+<p><strong>256K 触发结构性 offload</strong>（12 层 → CPU，3 GB KV → CPU），Decode 性能掉到前三档的约 1/8。</p>
+<p>64K / 128K / 192K 三档在 Prefill（8K prompt）和 Decode（中位）维度上的差异均 &lt; 10%。</p>
+<p>MTP 接受率跨档差距不大（0.46-0.55），不是性能差距主因。</p>
+</blockquote>
+<h3>12.1 关键证据链</h3>
+<table>
+<thead>
+<tr>
+<th>事实</th>
+<th>来源（文档 + 行类型）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>192K 全 GPU</td>
+<td><code>ollama192k.log</code> 中 <code>load_tensors: offloaded 66/66 layers to GPU</code> + <code>runner.size=17.0 GiB</code> == <code>runner.vram=17.0 GiB</code></td>
+</tr>
+<tr>
+<td>256K 触发 offload</td>
+<td><code>ollama256k.log</code> 中 <code>load_tensors: offloaded 54/66 layers to GPU</code> + <code>runner.vram=14.5 GiB</code> ≠ <code>runner.size=21.2 GiB</code> + <code>CPU KV buffer size = 3072.00 MiB</code></td>
+</tr>
+<tr>
+<td>实时确认 256K 是 32%/68%</td>
+<td><code>新建文本文档.txt</code> 中 <code>ollama ps</code> 第四行 <code>32%/68% CPU/GPU</code></td>
+</tr>
+<tr>
+<td>实时确认 64/128/192K 是 100% GPU</td>
+<td><code>新建文本文档.txt</code> 中 <code>ollama ps</code> 前 3 行 <code>100% GPU</code></td>
+</tr>
+<tr>
+<td>Decode 256K 跌到 5-10 tok/s</td>
+<td><code>ollama256k.log</code> 中 task 0 / task 16 的 <code>eval time</code> 行</td>
+</tr>
+</tbody>
+</table>
+<h3>12.2 数据未覆盖的方面（坦白说明）</h3>
+<table>
+<thead>
+<tr>
+<th>未覆盖内容</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64K 档位独立 log 数据</td>
+<td>本批文档无 <code>ollama64k_32G.log</code>，仅 <code>ollama64k.log</code>（本批中 64K = 65536）</td>
+</tr>
+<tr>
+<td>80K / 96K / 112K / 160K 等中间档</td>
+<td>本批文档只有 64K / 128K / 192K / 256K 四档</td>
+</tr>
+<tr>
+<td>跨硬件（24G / 48G / 80G）对比</td>
+<td>文档中无其他硬件的 log 数据</td>
+</tr>
+<tr>
+<td>显存带宽 / TDP 详细规格</td>
+<td>文档中 nvidia-smi 未提供</td>
+</tr>
+<tr>
+<td>256K 实际推理的完整长输出数据</td>
+<td><code>ollama256k.log</code> 仅 2 个 task，远少于其他档</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<blockquote>
+<p>报告完成。所有数字都标注了来源文档与 log 行类型，未引入文档外的任何规格、对比或预测。</p>
+</blockquote>
+</body>
+</html>

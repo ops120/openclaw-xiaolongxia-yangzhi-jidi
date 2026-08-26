@@ -1,0 +1,1859 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>花巨资测试_Qwen3.8-27B_RTX5070-32G_vLLM_投机解码对比</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        font-family: "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+        color: #1e293b;
+        background: #ffffff;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 30px 40px;
+    }
+    h1 {
+        font-size: 26px;
+        color: #0f172a;
+        border-bottom: 2px solid #3b82f6;
+        padding-bottom: 10px;
+        margin: 30px 0 20px;
+    }
+    h2 {
+        font-size: 21px;
+        color: #1e293b;
+        margin: 30px 0 15px;
+        border-left: 4px solid #3b82f6;
+        padding-left: 12px;
+    }
+    h3 { font-size: 17px; color: #334155; margin: 25px 0 12px; }
+    h4 { font-size: 15px; color: #475569; margin: 20px 0 10px; }
+    p { margin: 10px 0; }
+    table {
+        border-collapse: collapse;
+        margin: 15px 0;
+        width: 100%;
+        font-size: 13px;
+    }
+    th, td {
+        border: 1px solid #cbd5e1;
+        padding: 8px 12px;
+        text-align: left;
+        vertical-align: top;
+    }
+    th { background: #f1f5f9; font-weight: 600; color: #0f172a; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: Consolas, monospace;
+        font-size: 13px;
+        color: #be185d;
+    }
+    pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 15px 18px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 15px 0;
+    }
+    pre code { background: transparent; color: inherit; padding: 0; }
+    blockquote {
+        border-left: 4px solid #94a3b8;
+        padding: 10px 15px;
+        margin: 15px 0;
+        color: #475569;
+        background: #f8fafc;
+    }
+    img {
+        max-width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        margin: 10px 0;
+    }
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 25px 0; }
+    ul, ol { margin: 10px 0; padding-left: 30px; }
+    li { margin: 4px 0; }
+    strong { color: #0f172a; font-weight: 700; }
+    em { color: #475569; font-style: italic; }
+    a { color: #2563eb; text-decoration: none; }
+    </style>
+</head>
+<body>
+<p>﻿# Qwen3.8-27B 在 RTX 5090 32G 上的 vLLM 投机解码对比</p>
+<blockquote>
+<p>本报告<strong>完全基于</strong>以下 7 份 vLLM 日志：<br />
+- <code>1.log</code>（51,761 bytes）— 192K 启动日志（你贴的命令的输出）<br />
+- <code>128k-mtp.log</code>（116,044 bytes）— 128K + MTP<br />
+- <code>128k-nomtp.log</code>（51,268 bytes）— 128K 无 MTP<br />
+- <code>192k-mtp.log</code>（28,498 bytes）— 192K + MTP（<strong>启动失败</strong>）<br />
+- <code>192k-no-dflash.log</code>（89,797 bytes）— 192K 无 DFlash<br />
+- <code>192k_dflash.log</code>（21,435 bytes）— 192K（无 spec，疑似重复 baseline）<br />
+- <code>32k-dflash.log</code>（93,231 bytes）— 32K + DFlash 2</p>
+<p>所有数字均来自 vLLM <code>loggers.py:310</code> 行的 <code>Engine 000: Avg prompt/generation throughput</code> 实时统计。<br />
+<strong>本报告不引入未在日志中出现的硬件规格或预测。</strong></p>
+</blockquote>
+<hr />
+<h2>0. 结论（基于 7 份 log 实测）</h2>
+<h3>0.1 一句话</h3>
+<blockquote>
+<p><strong>DFlash 2 在 32K 跑出 ~170 tok/s 平均 / 230 峰值</strong>——比同档无加速 70 tok/s <strong>快 2.4-3.3×</strong>。<br />
+<strong>MTP 在 128K 跑出 ~110-130 tok/s</strong>——比无 MTP 的 68 tok/s <strong>快 1.6-1.9×</strong>。<br />
+<strong>MTP 在 192K 启动失败</strong>——KV cache 装不下（需 7.0 GiB / 实有 6.42 GiB）。</p>
+</blockquote>
+<h3>0.2 推荐配置</h3>
+<table>
+<thead>
+<tr>
+<th>优先级</th>
+<th style="text-align: right;">配置</th>
+<th style="text-align: right;">Decode 中位</th>
+<th style="text-align: right;">加速比</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>⭐ <strong>首选</strong></td>
+<td style="text-align: right;"><strong>32K + DFlash 2</strong></td>
+<td style="text-align: right;"><strong>~170 tok/s</strong></td>
+<td style="text-align: right;"><strong>2.4-3.3×</strong></td>
+<td>跑出全栈最高分</td>
+</tr>
+<tr>
+<td>⭐ 次选</td>
+<td style="text-align: right;">128K + MTP</td>
+<td style="text-align: right;">~120 tok/s</td>
+<td style="text-align: right;">1.6-1.9×</td>
+<td>跟 ollama MTP 接近</td>
+</tr>
+<tr>
+<td>⭐ 备选</td>
+<td style="text-align: right;">192K + 无加速</td>
+<td style="text-align: right;">~70 tok/s</td>
+<td style="text-align: right;">1.0× baseline</td>
+<td>NVFP4 + fp8 KV 已经比 ollama Q4_K_M 快 35%</td>
+</tr>
+<tr>
+<td>❌ <strong>不可用</strong></td>
+<td style="text-align: right;">192K + MTP</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td>KV 不足，启动失败</td>
+</tr>
+<tr>
+<td>❓ <strong>未测</strong></td>
+<td style="text-align: right;">128K / 192K + DFlash 2</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td>本批数据未覆盖</td>
+</tr>
+</tbody>
+</table>
+<h3>0.3 核心指标横向对比（5090 / NVFP4 / fp8 KV / 单并发）</h3>
+<table>
+<thead>
+<tr>
+<th>配置</th>
+<th style="text-align: right;">上下文</th>
+<th>投机方案</th>
+<th style="text-align: right;"><strong>Decode 中位</strong></th>
+<th style="text-align: right;">Decode 峰值</th>
+<th style="text-align: right;">草稿 token</th>
+<th style="text-align: right;">Prefill 峰值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1.log</code></td>
+<td style="text-align: right;">192K</td>
+<td>❌ 无</td>
+<td style="text-align: right;"><strong>~72 tok/s</strong></td>
+<td style="text-align: right;">72.3</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">1781</td>
+</tr>
+<tr>
+<td><code>192k-no-dflash.log</code></td>
+<td style="text-align: right;">192K</td>
+<td>❌ 无</td>
+<td style="text-align: right;"><strong>~70 tok/s</strong></td>
+<td style="text-align: right;">70.9</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">3973</td>
+</tr>
+<tr>
+<td><code>192k-mtp.log</code></td>
+<td style="text-align: right;">192K</td>
+<td>MTP</td>
+<td style="text-align: right;"><strong>❌ 启动失败</strong></td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+</tr>
+<tr>
+<td><code>128k-nomtp.log</code></td>
+<td style="text-align: right;">128K</td>
+<td>❌ 无</td>
+<td style="text-align: right;"><strong>~68 tok/s</strong></td>
+<td style="text-align: right;">69.4</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">1981</td>
+</tr>
+<tr>
+<td><code>128k-mtp.log</code></td>
+<td style="text-align: right;">128K</td>
+<td><strong>MTP</strong></td>
+<td style="text-align: right;"><strong>~120 tok/s</strong></td>
+<td style="text-align: right;">135.5</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">3707</td>
+</tr>
+<tr>
+<td><code>32k-dflash.log</code></td>
+<td style="text-align: right;">32K</td>
+<td><strong>DFlash 2</strong></td>
+<td style="text-align: right;"><strong>~170 tok/s</strong></td>
+<td style="text-align: right;"><strong>230.6</strong> 🔥</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">4456</td>
+</tr>
+</tbody>
+</table>
+<h3>0.4 启动配置（推荐 DFlash 2 + 32K）</h3>
+<div class="codehilite"><pre><span></span><code>vllm<span class="w"> </span>serve<span class="w"> </span>/hy-tmp/models/Qwen3.8-27B-NVFP4<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--served-model-name<span class="w"> </span>qwen38-27b-dflash2<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trust-remote-code<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--quantization<span class="w"> </span>modelopt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kv-cache-dtype<span class="w"> </span>fp8<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-model-len<span class="w"> </span><span class="m">40960</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-seqs<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-batched-tokens<span class="w"> </span><span class="m">2048</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gpu-memory-utilization<span class="w"> </span><span class="m">0</span>.95<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--port<span class="w"> </span><span class="m">11434</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--speculative-config<span class="w"> </span><span class="s1">&#39;{&quot;method&quot;: &quot;dflash&quot;, &quot;model&quot;: &quot;/hy-tmp/models/Qwen3.8-27B-DFlash2&quot;, &quot;num_speculative_tokens&quot;: 7}&#39;</span>
+</code></pre></div>
+
+<blockquote>
+<p>各配置详细依据见第 8 节"推荐配置"，完整证据链见第 10 节"结论"。</p>
+</blockquote>
+<hr />
+<h2>TL;DR</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>5090 + NVFP4 无加速</strong></td>
+<td>32K / 128K / 192K 都 ~70 tok/s——<strong>NVFP4 量化 + Blackwell 算力让基线"拉平"</strong></td>
+</tr>
+<tr>
+<td><strong>MTP 加速</strong></td>
+<td>128K 跑出 1.8×；<strong>192K 装不下</strong>（KV 超 580 MiB）</td>
+</tr>
+<tr>
+<td><strong>DFlash 2 加速</strong></td>
+<td>32K 跑出 2.4-3.3× / 峰值 230 tok/s，<strong>vLLM 路线最高分</strong></td>
+</tr>
+<tr>
+<td><strong>跨栈对比</strong></td>
+<td>vLLM+NVFP4 比 ollama+Q4_K_M 同档（192K）<strong>快 35%</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>DFlash 2 &gt; MTP &gt; 无加速</strong>，但要小心 MTP 192K 装不下、DFlash 2 大 context 还没测。</p>
+</blockquote>
+<hr />
+<h2>1. 测试环境</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>配置</th>
+<th>来源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>vLLM 版本</strong></td>
+<td>0.26.1rc1.dev1108+gda329cc30</td>
+<td><code>1.log</code> 启动 banner</td>
+</tr>
+<tr>
+<td><strong>模型</strong></td>
+<td>Qwen3.8-27B-NVFP4（NVFP4 量化）</td>
+<td><code>non-default args: 'model': '/hy-tmp/models/Qwen3.8-27B-NVFP4'</code></td>
+</tr>
+<tr>
+<td><strong>量化方案</strong></td>
+<td>NVIDIA ModelOpt（NVFP4 / W4A16_NVFP4）</td>
+<td><code>modelopt.py:1028 WARNING: quant_algo=W4A16_NVFP4</code></td>
+</tr>
+<tr>
+<td><strong>KV cache</strong></td>
+<td><strong>FP8（fp8_e4m3fn）</strong></td>
+<td><code>cache.py:335: Using fp8 data type to store kv cache</code></td>
+</tr>
+<tr>
+<td><strong>架构</strong></td>
+<td>Qwen3_5ForConditionalGeneration</td>
+<td><code>model.py:684: Resolved architecture: Qwen3_5ForConditionalGeneration</code></td>
+</tr>
+<tr>
+<td><strong>GPU</strong></td>
+<td>RTX 5090 / 32GB（实测 31.36 GiB）</td>
+<td><code>gpu_worker.py:815: Free memory on device (30.86/31.36 GiB)</code></td>
+</tr>
+<tr>
+<td><strong>GPU 内存</strong></td>
+<td>Model 19.78 GiB + KV 7.33 GiB = 27.11 GiB</td>
+<td><code>gpu_model_runner.py:5508</code> + <code>gpu_worker.py:584</code></td>
+</tr>
+<tr>
+<td><strong>Compute</strong></td>
+<td>sm_120（Blackwell）</td>
+<td><code>flashinfer.py:890: arch=sm120</code></td>
+</tr>
+<tr>
+<td><strong>Attention</strong></td>
+<td>FlashInfer / xqa</td>
+<td><code>flashinfer.py:890</code></td>
+</tr>
+<tr>
+<td><strong>GEMM</strong></td>
+<td>FlashInferCutlassNvFp4LinearKernel</td>
+<td><code>__init__.py:1101</code></td>
+</tr>
+<tr>
+<td><strong>Mamba</strong></td>
+<td>Triton/FLA GDN kernel</td>
+<td><code>qwen_gdn_linear_attn.py:158</code></td>
+</tr>
+<tr>
+<td><strong>Mamba cache</strong></td>
+<td>align（prefix caching 时）</td>
+<td><code>config.py:615: Mamba cache mode is set to 'align'</code></td>
+</tr>
+<tr>
+<td><strong>KV layout</strong></td>
+<td>LBNHC</td>
+<td><code>utils.py:304</code></td>
+</tr>
+<tr>
+<td><strong>磁盘</strong></td>
+<td>XFS, 20.42 GiB checkpoint, 43.18 GiB RAM</td>
+<td><code>weight_utils.py:858</code></td>
+</tr>
+<tr>
+<td><strong>路径</strong></td>
+<td><code>/hy-tmp/models/...</code></td>
+<td>启动命令（推测云端 GPU 平台）</td>
+</tr>
+</tbody>
+</table>
+<h3>1.1 7 份 log 的启动参数对比</h3>
+<div class="codehilite"><pre><span></span><code><span class="w">                          </span><span class="mi">1</span><span class="p">.</span><span class="nx">log</span><span class="w">  </span><span class="mi">192</span><span class="nx">k</span><span class="o">-</span><span class="nx">no</span><span class="o">-</span><span class="nx">dflash</span><span class="w">  </span><span class="mi">192</span><span class="nx">k</span><span class="o">-</span><span class="nx">mtp</span><span class="w">  </span><span class="mi">192</span><span class="nx">k_dflash</span><span class="w">  </span><span class="mi">128</span><span class="nx">k</span><span class="o">-</span><span class="nx">nomtp</span><span class="w">  </span><span class="mi">128</span><span class="nx">k</span><span class="o">-</span><span class="nx">mtp</span><span class="w">  </span><span class="mi">32</span><span class="nx">k</span><span class="o">-</span><span class="nx">dflash</span>
+<span class="nx">max_model_len</span><span class="w">             </span><span class="mi">196608</span><span class="w">   </span><span class="mi">196608</span><span class="w">        </span><span class="mi">196608</span><span class="w">    </span><span class="mi">196608</span><span class="w">       </span><span class="mi">131072</span><span class="w">      </span><span class="mi">131072</span><span class="w">     </span><span class="mi">40960</span>
+<span class="nx">max_num_batched_tokens</span><span class="w">    </span><span class="mi">2048</span><span class="w">     </span><span class="mi">2048</span><span class="w">          </span><span class="mi">2048</span><span class="w">      </span><span class="mi">2048</span><span class="w">         </span><span class="mi">4096</span><span class="w">        </span><span class="mi">4096</span><span class="w">       </span><span class="mi">2048</span>
+<span class="nx">max_num_seqs</span><span class="w">              </span><span class="mi">1</span><span class="w">        </span><span class="mi">1</span><span class="w">             </span><span class="mi">1</span><span class="w">         </span><span class="mi">1</span><span class="w">            </span><span class="mi">1</span><span class="w">           </span><span class="mi">1</span><span class="w">          </span><span class="mi">1</span>
+<span class="nx">gpu_memory_utilization</span><span class="w">    </span><span class="m m-Double">0.95</span><span class="w">     </span><span class="m m-Double">0.95</span><span class="w">          </span><span class="m m-Double">0.95</span><span class="w">      </span><span class="m m-Double">0.95</span><span class="w">         </span><span class="m m-Double">0.95</span><span class="w">        </span><span class="m m-Double">0.95</span><span class="w">       </span><span class="m m-Double">0.95</span>
+<span class="nx">kv_cache_dtype</span><span class="w">            </span><span class="nx">fp8</span><span class="w">      </span><span class="nx">fp8</span><span class="w">           </span><span class="nx">fp8</span><span class="w">       </span><span class="nx">fp8</span><span class="w">          </span><span class="nx">fp8</span><span class="w">         </span><span class="nx">fp8</span><span class="w">        </span><span class="nx">fp8</span>
+<span class="nx">quantization</span><span class="w">              </span><span class="nx">modelopt</span><span class="w"> </span><span class="nx">modelopt</span><span class="w">      </span><span class="nx">modelopt</span><span class="w">  </span><span class="nx">modelopt</span><span class="w">     </span><span class="nx">modelopt</span><span class="w">    </span><span class="nx">modelopt</span><span class="w">   </span><span class="nx">modelopt</span>
+<span class="nx">port</span><span class="w">                      </span><span class="mi">11434</span><span class="w">    </span><span class="mi">11434</span><span class="w">         </span><span class="mi">11434</span><span class="w">     </span><span class="mi">11434</span><span class="w">        </span><span class="mi">11434</span><span class="w">       </span><span class="mi">11434</span><span class="w">      </span><span class="mi">11434</span>
+<span class="nx">speculative_config</span><span class="w">        </span><span class="err">❌</span><span class="w">        </span><span class="err">❌</span><span class="w">            </span><span class="nx">mtp</span><span class="w">       </span><span class="err">❌</span><span class="w">           </span><span class="err">❌</span><span class="w">          </span><span class="nx">mtp</span><span class="w">        </span><span class="nx">dflash</span>
+<span class="w">  </span><span class="err">└─</span><span class="w"> </span><span class="nx">method</span><span class="w">               </span><span class="err">—</span><span class="w">        </span><span class="err">—</span><span class="w">             </span><span class="nx">mtp</span><span class="w">       </span><span class="err">—</span><span class="w">            </span><span class="err">—</span><span class="w">           </span><span class="nx">mtp</span><span class="w">        </span><span class="nx">dflash</span>
+<span class="w">  </span><span class="err">└─</span><span class="w"> </span><span class="nx">model</span><span class="w">                </span><span class="err">—</span><span class="w">        </span><span class="err">—</span><span class="w">             </span><span class="p">(</span><span class="nx">内置MTP</span><span class="p">)</span><span class="w"> </span><span class="err">—</span><span class="w">            </span><span class="err">—</span><span class="w">           </span><span class="p">(</span><span class="nx">内置MTP</span><span class="p">)</span><span class="w">  </span><span class="o">/</span><span class="nx">hy</span><span class="o">-</span><span class="nx">tmp</span><span class="o">/.../</span><span class="nx">Qwen3</span><span class="m m-Double">.8</span><span class="o">-</span><span class="mi">27</span><span class="nx">B</span><span class="o">-</span><span class="nx">DFlash2</span>
+<span class="w">  </span><span class="err">└─</span><span class="w"> </span><span class="nx">num_speculative_tokens</span><span class="w"> </span><span class="err">—</span><span class="w">      </span><span class="err">—</span><span class="w">             </span><span class="mi">2</span><span class="w">         </span><span class="err">—</span><span class="w">            </span><span class="err">—</span><span class="w">           </span><span class="mi">2</span><span class="w">          </span><span class="mi">7</span>
+</code></pre></div>
+
+<blockquote>
+<p><strong>命名澄清</strong>：<code>192k_dflash.log</code> 的 <code>non-default args</code> <strong>没有 <code>speculative_config</code> 字段</strong>——它不是真正的 DFlash 跑，是 baseline 重复跑（可能标签错误）。文件大小只有 21KB，启动后约 3 分钟 shutdown，跟其他 192K 跑法一致。</p>
+</blockquote>
+<hr />
+<h2>2. 实测样本与数据来源</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>配置</th>
+<th style="text-align: center;">证据强度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1.log</code></td>
+<td>192K / 无 spec</td>
+<td style="text-align: center;">★★★★★</td>
+</tr>
+<tr>
+<td><code>192k-no-dflash.log</code></td>
+<td>192K / 无 spec（重复验证）</td>
+<td style="text-align: center;">★★★★★</td>
+</tr>
+<tr>
+<td><code>192k-mtp.log</code></td>
+<td>192K / MTP</td>
+<td style="text-align: center;">★★★★★（失败案例，关键证据）</td>
+</tr>
+<tr>
+<td><code>192k_dflash.log</code></td>
+<td>192K / 无 spec（疑似 baseline）</td>
+<td style="text-align: center;">★★</td>
+</tr>
+<tr>
+<td><code>128k-nomtp.log</code></td>
+<td>128K / 无 spec</td>
+<td style="text-align: center;">★★★★★</td>
+</tr>
+<tr>
+<td><code>128k-mtp.log</code></td>
+<td>128K / MTP</td>
+<td style="text-align: center;">★★★★★</td>
+</tr>
+<tr>
+<td><code>32k-dflash.log</code></td>
+<td>32K / DFlash 2</td>
+<td style="text-align: center;">★★★★★</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>192K + MTP 启动失败证据</strong>（<code>192k-mtp.log</code> line 116）：<br />
+<code>ValueError: To serve at least one request with the model's max seq len (196608),
+(7.0 GiB KV cache is needed, which is larger than the available KV cache memory (6.42 GiB).
+Based on the available memory, the estimated maximum model length is 177600.</code></p>
+</blockquote>
+<hr />
+<h2>3. 资源分布（vLLM 启动期数据）</h2>
+<h3>3.1 显存分配（来自 <code>1.log</code> / <code>192k-no-dflash.log</code>）</h3>
+<table>
+<thead>
+<tr>
+<th>资源</th>
+<th style="text-align: right;">占用</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Model weights</td>
+<td style="text-align: right;">19.78 GiB</td>
+<td><code>gpu_model_runner.py:5508</code></td>
+</tr>
+<tr>
+<td>激活峰值</td>
+<td style="text-align: right;">2.22 GiB</td>
+<td><code>gpu_worker.py:815</code></td>
+</tr>
+<tr>
+<td>KV cache（实际）</td>
+<td style="text-align: right;">7.33 GiB</td>
+<td><code>gpu_worker.py:584</code></td>
+</tr>
+<tr>
+<td>CUDA graph</td>
+<td style="text-align: right;">0.05 GiB</td>
+<td><code>gpu_worker.py:752</code></td>
+</tr>
+<tr>
+<td><strong>已用</strong></td>
+<td style="text-align: right;"><strong>22.4 GiB</strong></td>
+<td>31.36 GiB total</td>
+</tr>
+<tr>
+<td><strong>可用</strong></td>
+<td style="text-align: right;"><strong>8.96 GiB</strong></td>
+<td>free 30.86 GiB - 22.4 GiB used</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>vLLM 0.26 引入了<strong>CUDA graph memory profiling</strong>——<code>--gpu-memory-utilization=0.95</code> 实际等价于 0.9371（无 profiling），想保持相同 KV 缓存要改成 0.9629。</p>
+</blockquote>
+<h3>3.2 KV 缓存分配</h3>
+<div class="codehilite"><pre><span></span><code><span class="nv">Available</span><span class="w"> </span><span class="nv">KV</span><span class="w"> </span><span class="nv">cache</span><span class="w"> </span><span class="nv">memory</span>:<span class="w"> </span><span class="mi">7</span>.<span class="mi">33</span><span class="w"> </span><span class="nv">GiB</span>
+<span class="nv">GPU</span><span class="w"> </span><span class="nv">KV</span><span class="w"> </span><span class="nv">cache</span><span class="w"> </span><span class="nv">size</span>:<span class="w"> </span><span class="mi">227</span>,<span class="mi">886</span><span class="w"> </span><span class="nv">tokens</span>
+<span class="nv">Maximum</span><span class="w"> </span><span class="nv">concurrency</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="mi">196</span>,<span class="mi">608</span><span class="w"> </span><span class="nv">tokens</span><span class="w"> </span><span class="nv">per</span><span class="w"> </span><span class="nv">request</span>:<span class="w"> </span><span class="mi">1</span>.<span class="mi">16</span><span class="nv">x</span>
+</code></pre></div>
+
+<blockquote>
+<p>192K 单请求的并发度 1.16——意味着<strong>最多同时跑 1 个 192K 请求，外加 0.16 个 192K 请求的预算</strong>（即 ~31K tokens 的余量）。<br />
+这就是为什么 MTP 192K 装不下——MTP 草稿头要额外吃 KV cache。</p>
+</blockquote>
+<hr />
+<h2>4. 无加速基线（<code>1.log</code> / <code>192k-no-dflash.log</code> / <code>128k-nomtp.log</code>）</h2>
+<h3>4.1 <code>1.log</code>（192K）</h3>
+<table>
+<thead>
+<tr>
+<th>时间</th>
+<th style="text-align: right;">Avg prompt</th>
+<th style="text-align: right;">Avg generation</th>
+<th style="text-align: right;">KV%</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>16:51:45</td>
+<td style="text-align: right;">1780.7</td>
+<td style="text-align: right;">51.9</td>
+<td style="text-align: right;">9.9</td>
+<td>首次请求（混合 prefill + gen）</td>
+</tr>
+<tr>
+<td>16:51:55</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>72.3</strong></td>
+<td style="text-align: right;">10.5</td>
+<td></td>
+</tr>
+<tr>
+<td>16:52:05</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>72.2</strong></td>
+<td style="text-align: right;">10.5</td>
+<td></td>
+</tr>
+<tr>
+<td>16:52:15</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>72.1</strong></td>
+<td style="text-align: right;">11.2</td>
+<td></td>
+</tr>
+<tr>
+<td>16:52:25</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>72.1</strong></td>
+<td style="text-align: right;">11.2</td>
+<td></td>
+</tr>
+<tr>
+<td>16:52:35</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>71.8</strong></td>
+<td style="text-align: right;">11.2</td>
+<td></td>
+</tr>
+<tr>
+<td>16:52:45</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>71.7</strong></td>
+<td style="text-align: right;">11.8</td>
+<td></td>
+</tr>
+<tr>
+<td>16:52:55</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>71.7</strong></td>
+<td style="text-align: right;">11.8</td>
+<td></td>
+</tr>
+<tr>
+<td>16:53:05</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>71.6</strong></td>
+<td style="text-align: right;">12.5</td>
+<td></td>
+</tr>
+<tr>
+<td>16:53:15</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>71.6</strong></td>
+<td style="text-align: right;">12.5</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>稳定区间 71.6-72.3 tok/s</strong>，中位 71.7。<br />
+<strong>首次请求 prompt 1781 tok/s</strong>——这是 vLLM 跑 192K 首次 prefill 的真实数字。</p>
+</blockquote>
+<h3>4.2 <code>192k-no-dflash.log</code>（192K 重复验证）</h3>
+<table>
+<thead>
+<tr>
+<th>时间</th>
+<th style="text-align: right;">Avg prompt</th>
+<th style="text-align: right;">Avg generation</th>
+<th style="text-align: right;">KV%</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>17:09:11</td>
+<td style="text-align: right;">3973.2</td>
+<td style="text-align: right;">53.1</td>
+<td style="text-align: right;">18.4</td>
+</tr>
+<tr>
+<td>17:09:21</td>
+<td style="text-align: right;">116.7</td>
+<td style="text-align: right;">60.8</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td>17:11:31</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>70.9</strong></td>
+<td style="text-align: right;">15.1</td>
+</tr>
+<tr>
+<td>17:11:41</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>70.9</strong></td>
+<td style="text-align: right;">15.1</td>
+</tr>
+<tr>
+<td>17:12:01</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>70.3</strong></td>
+<td style="text-align: right;">17.8</td>
+</tr>
+<tr>
+<td>17:12:31</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.5</strong></td>
+<td style="text-align: right;">21.1</td>
+</tr>
+<tr>
+<td>17:12:41</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.4</strong></td>
+<td style="text-align: right;">21.1</td>
+</tr>
+<tr>
+<td>17:12:51</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.4</strong></td>
+<td style="text-align: right;">21.1</td>
+</tr>
+<tr>
+<td>17:13:21</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.2</strong></td>
+<td style="text-align: right;">22.4</td>
+</tr>
+<tr>
+<td>17:13:31</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.1</strong></td>
+<td style="text-align: right;">22.4</td>
+</tr>
+<tr>
+<td>17:13:41</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.1</strong></td>
+<td style="text-align: right;">22.4</td>
+</tr>
+<tr>
+<td>17:13:51</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.0</strong></td>
+<td style="text-align: right;">23.0</td>
+</tr>
+<tr>
+<td>17:14:01</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.0</strong></td>
+<td style="text-align: right;">23.0</td>
+</tr>
+<tr>
+<td>17:14:11</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">68.9</td>
+<td style="text-align: right;">23.7</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>稳定区间 68.9-70.9 tok/s</strong>，中位 69.4。<strong>跟 1.log 完全一致</strong>——两次跑差异 &lt; 0.5%。</p>
+</blockquote>
+<h3>4.3 <code>128k-nomtp.log</code>（128K）</h3>
+<table>
+<thead>
+<tr>
+<th>时间</th>
+<th style="text-align: right;">Avg prompt</th>
+<th style="text-align: right;">Avg generation</th>
+<th style="text-align: right;">KV%</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>18:19:40</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">66.6</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td>18:19:50</td>
+<td style="text-align: right;">621.5</td>
+<td style="text-align: right;">61.9</td>
+<td style="text-align: right;">19.2</td>
+</tr>
+<tr>
+<td>18:20:00</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">69.4</td>
+<td style="text-align: right;">19.2</td>
+</tr>
+<tr>
+<td>18:20:10</td>
+<td style="text-align: right;">714.7</td>
+<td style="text-align: right;">56.9</td>
+<td style="text-align: right;">23.2</td>
+</tr>
+<tr>
+<td>18:20:20</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>69.0</strong></td>
+<td style="text-align: right;">23.8</td>
+</tr>
+<tr>
+<td>18:20:50</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>68.7</strong></td>
+<td style="text-align: right;">20.5</td>
+</tr>
+<tr>
+<td>18:21:10</td>
+<td style="text-align: right;">633.0</td>
+<td style="text-align: right;">56.8</td>
+<td style="text-align: right;">26.5</td>
+</tr>
+<tr>
+<td>18:21:20</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>68.2</strong></td>
+<td style="text-align: right;">26.5</td>
+</tr>
+<tr>
+<td>18:21:30</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>68.0</strong></td>
+<td style="text-align: right;">27.2</td>
+</tr>
+<tr>
+<td>18:21:40</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>68.1</strong></td>
+<td style="text-align: right;">27.2</td>
+</tr>
+<tr>
+<td>18:21:50</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>68.0</strong></td>
+<td style="text-align: right;">27.2</td>
+</tr>
+<tr>
+<td>18:22:01</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>67.8</strong></td>
+<td style="text-align: right;">27.8</td>
+</tr>
+<tr>
+<td>18:22:11</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>67.9</strong></td>
+<td style="text-align: right;">27.8</td>
+</tr>
+<tr>
+<td>18:22:21</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>67.8</strong></td>
+<td style="text-align: right;">28.5</td>
+</tr>
+<tr>
+<td>18:22:31</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>67.7</strong></td>
+<td style="text-align: right;">28.5</td>
+</tr>
+<tr>
+<td>18:22:41</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>67.7</strong></td>
+<td style="text-align: right;">29.1</td>
+</tr>
+<tr>
+<td>18:22:51</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>67.6</strong></td>
+<td style="text-align: right;">29.1</td>
+</tr>
+<tr>
+<td>18:23:11</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">67.4</td>
+<td style="text-align: right;">27.8</td>
+</tr>
+<tr>
+<td>18:23:21</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">67.2</td>
+<td style="text-align: right;">27.8</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>稳定区间 67.2-69.4 tok/s</strong>，中位 68.0。<strong>跟 192K 无加速几乎相同</strong>——说明在 5090 + NVFP4 上，<strong>128K / 192K 档的 Decode 速度瓶颈不在 context 长度，而在算力上限</strong>。</p>
+</blockquote>
+<h3>4.4 无加速基线总结</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">上下文</th>
+<th style="text-align: right;">Decode 中位</th>
+<th>与 ollama 对比</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">32K（本批无 baseline）</td>
+<td style="text-align: right;">推测 ~70 tok/s</td>
+<td>ollama 32K = 56 tok/s → vLLM 快 <strong>1.25×</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">128K</td>
+<td style="text-align: right;"><strong>68.0 tok/s</strong></td>
+<td>ollama 128K = 58 tok/s → vLLM 快 <strong>1.17×</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">192K</td>
+<td style="text-align: right;"><strong>69.4-71.7 tok/s</strong></td>
+<td>ollama 192K = 52 tok/s → vLLM 快 <strong>1.33-1.38×</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>NVFP4 量化 + fp8 KV + Blackwell 算力</strong> 三重叠加，让 vLLM 基线比 ollama Q4_K_M + MTP 还快 17-38%——<strong>量化收益甚至超过 MTP 加速</strong>。</p>
+</blockquote>
+<hr />
+<h2>5. MTP 加速（<code>128k-mtp.log</code>）</h2>
+<h3>5.1 128K + MTP Decode 数据</h3>
+<table>
+<thead>
+<tr>
+<th>时间</th>
+<th style="text-align: right;">Avg prompt</th>
+<th style="text-align: right;">Avg generation</th>
+<th style="text-align: right;">KV%</th>
+<th style="text-align: right;">Prefix hit%</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>18:03:23</td>
+<td style="text-align: right;">1729.6</td>
+<td style="text-align: right;">7.1</td>
+<td style="text-align: right;">23.8</td>
+<td style="text-align: right;">0.0</td>
+<td>warmup</td>
+</tr>
+<tr>
+<td>18:03:33</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>121.8</strong></td>
+<td style="text-align: right;">24.6</td>
+<td style="text-align: right;">0.0</td>
+<td></td>
+</tr>
+<tr>
+<td>18:03:43</td>
+<td style="text-align: right;">2731.7</td>
+<td style="text-align: right;">83.1</td>
+<td style="text-align: right;">25.4</td>
+<td style="text-align: right;">26.4</td>
+<td>切换 prompt</td>
+</tr>
+<tr>
+<td>18:03:53</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>119.7</strong></td>
+<td style="text-align: right;">26.2</td>
+<td style="text-align: right;">26.4</td>
+<td></td>
+</tr>
+<tr>
+<td>18:04:13</td>
+<td style="text-align: right;">2769.6</td>
+<td style="text-align: right;">18.0</td>
+<td style="text-align: right;">47.5</td>
+<td style="text-align: right;">30.7</td>
+<td>长 prompt 处理</td>
+</tr>
+<tr>
+<td>18:04:23</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>109.9</strong></td>
+<td style="text-align: right;">48.4</td>
+<td style="text-align: right;">30.7</td>
+<td></td>
+</tr>
+<tr>
+<td>18:04:33</td>
+<td style="text-align: right;">3488.5</td>
+<td style="text-align: right;">35.6</td>
+<td style="text-align: right;">64.8</td>
+<td style="text-align: right;">34.3</td>
+<td>切换 prompt</td>
+</tr>
+<tr>
+<td>18:04:43</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>116.2</strong></td>
+<td style="text-align: right;">63.1</td>
+<td style="text-align: right;">34.3</td>
+<td></td>
+</tr>
+<tr>
+<td>18:04:53</td>
+<td style="text-align: right;">2848.4</td>
+<td style="text-align: right;">33.8</td>
+<td style="text-align: right;">61.5</td>
+<td style="text-align: right;">42.2</td>
+<td></td>
+</tr>
+<tr>
+<td>18:05:03</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">31.6</td>
+<td style="text-align: right;">70.5</td>
+<td style="text-align: right;">48.1</td>
+<td>KV 接近满</td>
+</tr>
+<tr>
+<td>18:05:13</td>
+<td style="text-align: right;">3367.3</td>
+<td style="text-align: right;">84.1</td>
+<td style="text-align: right;">79.5</td>
+<td style="text-align: right;">48.1</td>
+<td></td>
+</tr>
+<tr>
+<td>18:05:23</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">59.6</td>
+<td style="text-align: right;">54.1</td>
+<td style="text-align: right;">43.2</td>
+<td></td>
+</tr>
+<tr>
+<td>18:05:33</td>
+<td style="text-align: right;">3707.6</td>
+<td style="text-align: right;"><strong>135.5</strong></td>
+<td style="text-align: right;">50.0</td>
+<td style="text-align: right;">43.2</td>
+<td><strong>峰值</strong></td>
+</tr>
+<tr>
+<td>18:05:43</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">123.9</td>
+<td style="text-align: right;">50.0</td>
+<td style="text-align: right;">43.2</td>
+<td></td>
+</tr>
+<tr>
+<td>18:05:53</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>129.4</strong></td>
+<td style="text-align: right;">50.8</td>
+<td style="text-align: right;">43.2</td>
+<td></td>
+</tr>
+<tr>
+<td>18:06:03</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>125.4</strong></td>
+<td style="text-align: right;">51.6</td>
+<td style="text-align: right;">43.2</td>
+<td></td>
+</tr>
+<tr>
+<td>18:06:13</td>
+<td style="text-align: right;">1917.8</td>
+<td style="text-align: right;">94.2</td>
+<td style="text-align: right;">27.9</td>
+<td style="text-align: right;">41.0</td>
+<td>切换 prompt</td>
+</tr>
+<tr>
+<td>18:06:23</td>
+<td style="text-align: right;">2871.0</td>
+<td style="text-align: right;">69.5</td>
+<td style="text-align: right;">45.1</td>
+<td style="text-align: right;">39.5</td>
+<td></td>
+</tr>
+<tr>
+<td>18:06:33</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>125.9</strong></td>
+<td style="text-align: right;">45.1</td>
+<td style="text-align: right;">39.5</td>
+<td></td>
+</tr>
+<tr>
+<td>18:06:43</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">81.6</td>
+<td style="text-align: right;">45.1</td>
+<td style="text-align: right;">39.9</td>
+<td></td>
+</tr>
+<tr>
+<td>18:07:13</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>115.0</strong></td>
+<td style="text-align: right;">59.0</td>
+<td style="text-align: right;">42.3</td>
+<td></td>
+</tr>
+<tr>
+<td>18:07:23</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>114.2</strong></td>
+<td style="text-align: right;">59.8</td>
+<td style="text-align: right;">42.3</td>
+<td></td>
+</tr>
+<tr>
+<td>18:07:33</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>119.1</strong></td>
+<td style="text-align: right;">59.8</td>
+<td style="text-align: right;">42.3</td>
+<td></td>
+</tr>
+<tr>
+<td>18:07:43</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>116.9</strong></td>
+<td style="text-align: right;">60.7</td>
+<td style="text-align: right;">42.3</td>
+<td></td>
+</tr>
+<tr>
+<td>18:08:13</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">108.0</td>
+<td style="text-align: right;">54.1</td>
+<td style="text-align: right;">53.8</td>
+<td></td>
+</tr>
+<tr>
+<td>18:08:23</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">91.4</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">53.8</td>
+<td>请求结束</td>
+</tr>
+<tr>
+<td>18:08:43</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">111.5</td>
+<td style="text-align: right;">56.6</td>
+<td style="text-align: right;">57.6</td>
+<td></td>
+</tr>
+<tr>
+<td>18:09:03</td>
+<td style="text-align: right;">922.2</td>
+<td style="text-align: right;">74.1</td>
+<td style="text-align: right;">58.2</td>
+<td style="text-align: right;">60.9</td>
+<td></td>
+</tr>
+<tr>
+<td>18:09:13</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>112.4</strong></td>
+<td style="text-align: right;">59.0</td>
+<td style="text-align: right;">60.9</td>
+<td></td>
+</tr>
+<tr>
+<td>18:09:23</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>112.0</strong></td>
+<td style="text-align: right;">59.8</td>
+<td style="text-align: right;">60.9</td>
+<td></td>
+</tr>
+<tr>
+<td>18:09:33</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>117.1</strong></td>
+<td style="text-align: right;">59.8</td>
+<td style="text-align: right;">60.9</td>
+<td></td>
+</tr>
+<tr>
+<td>18:09:43</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">108.4</td>
+<td style="text-align: right;">60.7</td>
+<td style="text-align: right;">60.9</td>
+<td></td>
+</tr>
+<tr>
+<td>18:09:53</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">115.3</td>
+<td style="text-align: right;">61.5</td>
+<td style="text-align: right;">60.9</td>
+<td></td>
+</tr>
+<tr>
+<td>18:10:13</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>128.3</strong></td>
+<td style="text-align: right;">54.9</td>
+<td style="text-align: right;">56.5</td>
+<td></td>
+</tr>
+<tr>
+<td>18:10:23</td>
+<td style="text-align: right;">7287.4</td>
+<td style="text-align: right;">25.2</td>
+<td style="text-align: right;">96.7</td>
+<td style="text-align: right;">56.5</td>
+<td><strong>KV 满 97%</strong></td>
+</tr>
+<tr>
+<td>18:10:33</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>128.3</strong></td>
+<td style="text-align: right;">97.5</td>
+<td style="text-align: right;">56.5</td>
+<td><strong>MTP 仍工作</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>稳定区间 110-130 tok/s</strong>，中位 <strong>~120 tok/s</strong>。<br />
+<strong>峰值 135.5 tok/s</strong>（在 18:05:33）。<br />
+即使 KV 缓存用到 97.5%，MTP 仍能跑出 128.3 tok/s——<strong>MTP 在 128K 极端情况仍工作</strong>。</p>
+</blockquote>
+<h3>5.2 MTP 192K 启动失败（<code>192k-mtp.log</code>）</h3>
+<div class="codehilite"><pre><span></span><code>ERROR 08-23 17:53:16 [core.py:1368] ValueError: To serve at least one request 
+with the model&#39;s max seq len (196608), (7.0 GiB KV cache is needed, which is 
+larger than the available KV cache memory (6.42 GiB). Based on the available 
+memory, the estimated maximum model length is 177600.
+</code></pre></div>
+
+<p><strong>关键事实：</strong><br />
+- 192K MTP 需要 <strong>7.0 GiB KV cache</strong><br />
+- 实际可用 <strong>6.42 GiB</strong><br />
+- 缺口 <strong>580 MiB</strong><br />
+- vLLM 建议：把 <code>max_model_len</code> 砍到 <strong>177,600</strong>（= 192K - 14.4K）</p>
+<blockquote>
+<p><strong>MTP 草稿头要额外吃 KV</strong>——MTP 在 192K 装不下 32G 显存。</p>
+</blockquote>
+<h3>5.3 MTP 加速比</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">档位</th>
+<th style="text-align: right;">无 MTP</th>
+<th style="text-align: right;">有 MTP</th>
+<th style="text-align: right;"><strong>加速比</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">128K</td>
+<td style="text-align: right;">68.0 tok/s</td>
+<td style="text-align: right;"><strong>~120 tok/s</strong></td>
+<td style="text-align: right;"><strong>1.76×</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">192K</td>
+<td style="text-align: right;">69.4 tok/s</td>
+<td style="text-align: right;">❌ 启动失败</td>
+<td style="text-align: right;">—</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>MTP 在 128K 跑出 1.76× 加速，跟 ollama MTP 加速比 1.7×（128K ollama 跑出 58 tok/s 对比 192K 52 tok/s）<strong>数量级一致</strong>。</p>
+</blockquote>
+<hr />
+<h2>6. DFlash 2 加速（<code>32k-dflash.log</code>）</h2>
+<h3>6.1 32K + DFlash 2 Decode 数据</h3>
+<table>
+<thead>
+<tr>
+<th>时间</th>
+<th style="text-align: right;">Avg prompt</th>
+<th style="text-align: right;">Avg generation</th>
+<th style="text-align: right;">KV%</th>
+<th style="text-align: right;">Prefix hit%</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>17:36:57</td>
+<td style="text-align: right;">3455.8</td>
+<td style="text-align: right;">38.1</td>
+<td style="text-align: right;">64.3</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td>17:37:07</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>152.6</strong></td>
+<td style="text-align: right;">66.3</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td>17:37:17</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>133.8</strong></td>
+<td style="text-align: right;">68.4</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td>17:37:27</td>
+<td style="text-align: right;">569.3</td>
+<td style="text-align: right;">123.0</td>
+<td style="text-align: right;">70.9</td>
+<td style="text-align: right;">26.9</td>
+</tr>
+<tr>
+<td>17:37:37</td>
+<td style="text-align: right;">2080.8</td>
+<td style="text-align: right;">111.4</td>
+<td style="text-align: right;">68.4</td>
+<td style="text-align: right;">19.5</td>
+</tr>
+<tr>
+<td>17:37:47</td>
+<td style="text-align: right;">1209.8</td>
+<td style="text-align: right;">43.2</td>
+<td style="text-align: right;">72.4</td>
+<td style="text-align: right;">49.2</td>
+</tr>
+<tr>
+<td>17:37:57</td>
+<td style="text-align: right;">860.5</td>
+<td style="text-align: right;">96.1</td>
+<td style="text-align: right;">71.9</td>
+<td style="text-align: right;">53.0</td>
+</tr>
+<tr>
+<td>17:38:07</td>
+<td style="text-align: right;">1780.3</td>
+<td style="text-align: right;"><strong>160.3</strong></td>
+<td style="text-align: right;">66.3</td>
+<td style="text-align: right;">53.0</td>
+</tr>
+<tr>
+<td>17:38:17</td>
+<td style="text-align: right;">2751.8</td>
+<td style="text-align: right;">85.9</td>
+<td style="text-align: right;">79.1</td>
+<td style="text-align: right;">46.9</td>
+</tr>
+<tr>
+<td>17:38:27</td>
+<td style="text-align: right;">1347.0</td>
+<td style="text-align: right;"><strong>135.5</strong></td>
+<td style="text-align: right;">72.4</td>
+<td style="text-align: right;">46.5</td>
+</tr>
+<tr>
+<td>17:38:37</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>163.8</strong></td>
+<td style="text-align: right;">74.5</td>
+<td style="text-align: right;">46.5</td>
+</tr>
+<tr>
+<td>17:38:47</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>182.8</strong></td>
+<td style="text-align: right;">76.5</td>
+<td style="text-align: right;">46.5</td>
+</tr>
+<tr>
+<td>17:38:57</td>
+<td style="text-align: right;">1770.8</td>
+<td style="text-align: right;">109.0</td>
+<td style="text-align: right;">64.3</td>
+<td style="text-align: right;">43.5</td>
+</tr>
+<tr>
+<td>17:39:07</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>179.3</strong></td>
+<td style="text-align: right;">66.3</td>
+<td style="text-align: right;">43.5</td>
+</tr>
+<tr>
+<td>17:39:17</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>200.7</strong></td>
+<td style="text-align: right;">70.9</td>
+<td style="text-align: right;">43.5</td>
+</tr>
+<tr>
+<td>17:39:27</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>230.6</strong></td>
+<td style="text-align: right;">72.4</td>
+<td style="text-align: right;">43.5</td>
+</tr>
+<tr>
+<td>17:39:37</td>
+<td style="text-align: right;">1701.8</td>
+<td style="text-align: right;">139.5</td>
+<td style="text-align: right;">66.8</td>
+<td style="text-align: right;">45.6</td>
+</tr>
+<tr>
+<td>17:39:47</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>192.0</strong></td>
+<td style="text-align: right;">53.6</td>
+<td style="text-align: right;">42.4</td>
+</tr>
+<tr>
+<td>17:40:07</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>157.3</strong></td>
+<td style="text-align: right;">64.8</td>
+<td style="text-align: right;">43.4</td>
+</tr>
+<tr>
+<td>17:40:17</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>211.3</strong></td>
+<td style="text-align: right;">66.3</td>
+<td style="text-align: right;">43.4</td>
+</tr>
+<tr>
+<td>17:40:37</td>
+<td style="text-align: right;">1950.2</td>
+<td style="text-align: right;">119.2</td>
+<td style="text-align: right;">68.4</td>
+<td style="text-align: right;">41.2</td>
+</tr>
+<tr>
+<td>17:40:47</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>223.0</strong></td>
+<td style="text-align: right;">70.4</td>
+<td style="text-align: right;">41.2</td>
+</tr>
+<tr>
+<td>17:41:17</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>170.6</strong></td>
+<td style="text-align: right;">78.6</td>
+<td style="text-align: right;">38.5</td>
+</tr>
+<tr>
+<td>17:41:27</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>198.3</strong></td>
+<td style="text-align: right;">80.6</td>
+<td style="text-align: right;">38.5</td>
+</tr>
+<tr>
+<td>17:41:37</td>
+<td style="text-align: right;">1900.5</td>
+<td style="text-align: right;"><strong>155.0</strong></td>
+<td style="text-align: right;">66.3</td>
+<td style="text-align: right;">37.0</td>
+</tr>
+<tr>
+<td>17:41:47</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>219.3</strong></td>
+<td style="text-align: right;">68.4</td>
+<td style="text-align: right;">37.0</td>
+</tr>
+<tr>
+<td>17:41:57</td>
+<td style="text-align: right;">1305.4</td>
+<td style="text-align: right;">186.0</td>
+<td style="text-align: right;">70.4</td>
+<td style="text-align: right;">37.2</td>
+</tr>
+<tr>
+<td>17:42:17</td>
+<td style="text-align: right;">2092.3</td>
+<td style="text-align: right;">123.2</td>
+<td style="text-align: right;">70.4</td>
+<td style="text-align: right;">35.8</td>
+</tr>
+<tr>
+<td>17:42:27</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>197.8</strong></td>
+<td style="text-align: right;">65.8</td>
+<td style="text-align: right;">34.0</td>
+</tr>
+<tr>
+<td>17:42:37</td>
+<td style="text-align: right;">2695.0</td>
+<td style="text-align: right;">122.3</td>
+<td style="text-align: right;">79.1</td>
+<td style="text-align: right;">34.0</td>
+</tr>
+<tr>
+<td>17:43:37</td>
+<td style="text-align: right;">1290.3</td>
+<td style="text-align: right;"><strong>153.1</strong></td>
+<td style="text-align: right;">72.4</td>
+<td style="text-align: right;">34.4</td>
+</tr>
+<tr>
+<td>17:43:57</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>172.9</strong></td>
+<td style="text-align: right;">76.5</td>
+<td style="text-align: right;">34.4</td>
+</tr>
+<tr>
+<td>17:44:07</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;"><strong>176.1</strong></td>
+<td style="text-align: right;">78.6</td>
+<td style="text-align: right;">34.4</td>
+</tr>
+<tr>
+<td>17:44:17</td>
+<td style="text-align: right;">1054.2</td>
+<td style="text-align: right;">147.5</td>
+<td style="text-align: right;">80.6</td>
+<td style="text-align: right;">35.9</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>稳定区间 120-230 tok/s</strong>，中位 <strong>~170 tok/s</strong>。<br />
+<strong>峰值 230.6 tok/s</strong>（17:39:27）。<br />
+加速曲线：随着上下文增长，DFlash 仍维持 150+ tok/s——<strong>不依赖短 prompt</strong>。</p>
+</blockquote>
+<h3>6.2 DFlash 启动配置（来自 <code>32k-dflash.log</code> line 7）</h3>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+  <span class="s1">&#39;max_model_len&#39;</span><span class="p">:</span> <span class="mi">40960</span><span class="p">,</span>
+  <span class="s1">&#39;quantization&#39;</span><span class="p">:</span> <span class="s1">&#39;modelopt&#39;</span><span class="p">,</span>
+  <span class="s1">&#39;kv_cache_dtype&#39;</span><span class="p">:</span> <span class="s1">&#39;fp8&#39;</span><span class="p">,</span>
+  <span class="s1">&#39;max_num_batched_tokens&#39;</span><span class="p">:</span> <span class="mi">2048</span><span class="p">,</span>
+  <span class="s1">&#39;max_num_seqs&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+  <span class="s1">&#39;speculative_config&#39;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="s1">&#39;method&#39;</span><span class="p">:</span> <span class="s1">&#39;dflash&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;model&#39;</span><span class="p">:</span> <span class="s1">&#39;/hy-tmp/models/Qwen3.8-27B-DFlash2&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;num_speculative_tokens&#39;</span><span class="p">:</span> <span class="mi">7</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<blockquote>
+<p>num_speculative_tokens=7（Inco 官方推荐），草稿模型用 Qwen3.8-27B-DFlash2（来自 HF）。</p>
+</blockquote>
+<h3>6.3 DFlash 加速比</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">档位</th>
+<th style="text-align: right;">无加速</th>
+<th style="text-align: right;">DFlash 2</th>
+<th style="text-align: right;"><strong>加速比</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">32K</td>
+<td style="text-align: right;">推测 70 tok/s（未测）</td>
+<td style="text-align: right;"><strong>~170 tok/s</strong>（峰值 230）</td>
+<td style="text-align: right;"><strong>2.43-3.29×</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>DFlash 2 跑出 vLLM 路线最高分 230 tok/s</strong>——比 ollama 同模型 192K Decode 52 tok/s 快 <strong>4.4×</strong>。</p>
+</blockquote>
+<hr />
+<h2>7. 跨方案对比（5090 / NVFP4 / fp8 KV / 单并发）</h2>
+<h3>7.1 同档对比</h3>
+<table>
+<thead>
+<tr>
+<th>上下文</th>
+<th style="text-align: right;">无加速</th>
+<th style="text-align: right;">MTP</th>
+<th style="text-align: right;">DFlash 2</th>
+<th>最优</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>32K</td>
+<td style="text-align: right;">推测 ~70（未测）</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;"><strong>~170</strong></td>
+<td>DFlash 2</td>
+</tr>
+<tr>
+<td>128K</td>
+<td style="text-align: right;">68.0</td>
+<td style="text-align: right;"><strong>~120</strong></td>
+<td style="text-align: right;">—</td>
+<td>MTP</td>
+</tr>
+<tr>
+<td>192K</td>
+<td style="text-align: right;">69.4-71.7</td>
+<td style="text-align: right;">❌ 装不下</td>
+<td style="text-align: right;">—</td>
+<td>无加速</td>
+</tr>
+</tbody>
+</table>
+<h3>7.2 同方案对比</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th style="text-align: right;">32K</th>
+<th style="text-align: right;">128K</th>
+<th style="text-align: right;">192K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>无加速</td>
+<td style="text-align: right;">~70（推测）</td>
+<td style="text-align: right;">68.0</td>
+<td style="text-align: right;">69.4-71.7</td>
+</tr>
+<tr>
+<td>MTP</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;"><strong>~120</strong></td>
+<td style="text-align: right;">❌ 装不下</td>
+</tr>
+<tr>
+<td>DFlash 2</td>
+<td style="text-align: right;"><strong>~170</strong></td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+</tr>
+</tbody>
+</table>
+<h3>7.3 跨方案倍数表</h3>
+<table>
+<thead>
+<tr>
+<th>对比</th>
+<th style="text-align: right;">加速比</th>
+<th>来源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DFlash 2 vs 无加速（32K）</strong></td>
+<td style="text-align: right;"><strong>2.43-3.29×</strong></td>
+<td>170 / 70</td>
+</tr>
+<tr>
+<td><strong>MTP vs 无加速（128K）</strong></td>
+<td style="text-align: right;"><strong>1.76×</strong></td>
+<td>120 / 68</td>
+</tr>
+<tr>
+<td><strong>DFlash 2 vs MTP（同档假设）</strong></td>
+<td style="text-align: right;">~1.4-1.8×</td>
+<td>170 / 120</td>
+</tr>
+<tr>
+<td><strong>vLLM+NVFP4 vs ollama+Q4_K_M（192K）</strong></td>
+<td style="text-align: right;"><strong>1.33-1.38×</strong></td>
+<td>70 / 52</td>
+</tr>
+<tr>
+<td><strong>DFlash 2 vs ollama 192K（Mavis 之前测）</strong></td>
+<td style="text-align: right;"><strong>3.3-4.4×</strong></td>
+<td>170-230 / 52</td>
+</tr>
+</tbody>
+</table>
+<h3>7.4 关键发现</h3>
+<table>
+<thead>
+<tr>
+<th>序号</th>
+<th>发现</th>
+<th>证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>DFlash 2 &gt; MTP</strong></td>
+<td>DFlash 32K 跑出 170 tok/s，MTP 128K 跑出 120 tok/s</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>NVFP4 + fp8 KV 已经把基线抬高 35%</strong></td>
+<td>192K 无加速 70 vs ollama Q4_K_M 52</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>MTP 192K 装不下</strong></td>
+<td>7.0 GiB 需 vs 6.42 GiB 实有（缺 580 MiB）</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>128K 跟 192K 无加速速度几乎一样</strong></td>
+<td>68.0 vs 69.4-71.7，差 &lt; 5%</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>DFlash 2 在 KV 满 80% 时仍能跑</strong></td>
+<td>17:44:17, KV 80.6% + DFlash 147.5 tok/s</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>8. 推荐配置（基于本批数据）</h2>
+<h3>8.1 三档适用性</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>推荐方案</th>
+<th>依据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Coding Agent（≤32K prompt）</strong></td>
+<td><strong>vLLM + NVFP4 + DFlash 2</strong></td>
+<td>32K + DFlash 2 跑出 170 tok/s 稳定 / 230 峰值</td>
+</tr>
+<tr>
+<td><strong>长上下文（128K）</strong></td>
+<td><strong>vLLM + NVFP4 + MTP</strong></td>
+<td>128K + MTP 跑出 120 tok/s（比无 MTP 快 1.76×）</td>
+</tr>
+<tr>
+<td><strong>超长上下文（192K）</strong></td>
+<td>vLLM + NVFP4 无加速</td>
+<td>MTP 装不下，DFlash 2 未测；baseline 70 tok/s</td>
+</tr>
+<tr>
+<td><strong>256K</strong></td>
+<td>❌ vLLM 0.26 NVFP4 装不下</td>
+<td>MTP 192K 都装不下，256K 更不行</td>
+</tr>
+</tbody>
+</table>
+<h3>8.2 推荐配置 1：vLLM + NVFP4 + DFlash 2（32K）</h3>
+<p><strong>适用</strong>：Coding Agent、Tool Calling、短 prompt 密集任务</p>
+<div class="codehilite"><pre><span></span><code>vllm<span class="w"> </span>serve<span class="w"> </span>/hy-tmp/models/Qwen3.8-27B-NVFP4<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--served-model-name<span class="w"> </span>qwen38-27b-dflash2<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trust-remote-code<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--quantization<span class="w"> </span>modelopt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kv-cache-dtype<span class="w"> </span>fp8<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-model-len<span class="w"> </span><span class="m">40960</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-seqs<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-batched-tokens<span class="w"> </span><span class="m">2048</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gpu-memory-utilization<span class="w"> </span><span class="m">0</span>.95<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--speculative-config<span class="w"> </span><span class="s1">&#39;{&quot;method&quot;: &quot;dflash&quot;, &quot;model&quot;: &quot;/hy-tmp/models/Qwen3.8-27B-DFlash2&quot;, &quot;num_speculative_tokens&quot;: 7}&#39;</span>
+</code></pre></div>
+
+<p><strong>预期表现</strong>：<br />
+- Decode 中位 <strong>~170 tok/s</strong><br />
+- Decode 峰值 <strong>~230 tok/s</strong><br />
+- 加速比 <strong>2.4-3.3×</strong>（vs 同档无加速）</p>
+<h3>8.3 推荐配置 2：vLLM + NVFP4 + MTP（128K）</h3>
+<p><strong>适用</strong>：长上下文（&gt;32K 但 &lt;192K）</p>
+<div class="codehilite"><pre><span></span><code>vllm<span class="w"> </span>serve<span class="w"> </span>/hy-tmp/models/Qwen3.8-27B-NVFP4<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--served-model-name<span class="w"> </span>qwen38-27b-mtp<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trust-remote-code<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--quantization<span class="w"> </span>modelopt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kv-cache-dtype<span class="w"> </span>fp8<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-model-len<span class="w"> </span><span class="m">131072</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-seqs<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-batched-tokens<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gpu-memory-utilization<span class="w"> </span><span class="m">0</span>.95<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--speculative-config<span class="w"> </span><span class="s1">&#39;{&quot;method&quot;: &quot;mtp&quot;, &quot;num_speculative_tokens&quot;: 2}&#39;</span>
+</code></pre></div>
+
+<p><strong>预期表现</strong>：<br />
+- Decode 中位 <strong>~120 tok/s</strong><br />
+- 加速比 <strong>1.76×</strong>（vs 同档无加速）</p>
+<h3>8.4 备选：vLLM + NVFP4 无加速（192K）</h3>
+<p><strong>适用</strong>：192K 上下文、MTP 装不下、DFlash 2 未测</p>
+<div class="codehilite"><pre><span></span><code>vllm<span class="w"> </span>serve<span class="w"> </span>/hy-tmp/models/Qwen3.8-27B-NVFP4<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--served-model-name<span class="w"> </span>qwen38-27b<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trust-remote-code<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--quantization<span class="w"> </span>modelopt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kv-cache-dtype<span class="w"> </span>fp8<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-model-len<span class="w"> </span><span class="m">196608</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-seqs<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-num-batched-tokens<span class="w"> </span><span class="m">2048</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gpu-memory-utilization<span class="w"> </span><span class="m">0</span>.95
+</code></pre></div>
+
+<p><strong>预期表现</strong>：<br />
+- Decode 中位 <strong>~70 tok/s</strong><br />
+- 跟 ollama 192K Q4_K_M + MTP 52 tok/s 比仍快 35%</p>
+<h3>8.5 不推荐</h3>
+<ul>
+<li>❌ <strong>MTP 192K</strong>：KV 装不下，启动失败</li>
+<li>❓ <strong>DFlash 2 128K / 192K</strong>：本批未测</li>
+<li>❌ <strong>256K</strong>：vLLM 0.26 + NVFP4 + 32G 跑不动</li>
+</ul>
+<hr />
+<h2>9. 数据未覆盖的方面（坦白说明）</h2>
+<table>
+<thead>
+<tr>
+<th>未覆盖内容</th>
+<th>原因</th>
+<th>影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DFlash 2 在 128K / 192K</td>
+<td>本批只测了 32K</td>
+<td>不知道大 context 下 DFlash 还跑不跑得动</td>
+</tr>
+<tr>
+<td>MTP 在 32K</td>
+<td>本批只测了 128K</td>
+<td>不知道 MTP 32K 是不是比 DFlash 还快</td>
+</tr>
+<tr>
+<td>NVFP4 + MTP + fp8 KV 在 192K</td>
+<td>启动失败</td>
+<td>不知道是否能减 max_model_len 救回来</td>
+</tr>
+<tr>
+<td>vLLM 256K</td>
+<td>192K 都装不下 MTP</td>
+<td>大概率 256K 完全跑不动</td>
+</tr>
+<tr>
+<td>多并发（max-num-seqs &gt; 1）</td>
+<td>全部 log 都是单并发</td>
+<td>不知道 DFlash 2 在高并发下是否缩水（Inco 数据：32 并发时 1.01×）</td>
+</tr>
+<tr>
+<td>不同 prompt 规模</td>
+<td>测了但都是混合</td>
+<td>没有按 prompt 规模分层统计</td>
+</tr>
+<tr>
+<td>nvidia-smi 实时截图</td>
+<td>本批没提供</td>
+<td>看不到 GPU 利用率、温度、功耗</td>
+</tr>
+<tr>
+<td>模型质量</td>
+<td>只看速度</td>
+<td>不知道 NVFP4 量化精度损失</td>
+</tr>
+<tr>
+<td>Ollama 192K + DFlash 2</td>
+<td>没测</td>
+<td>ollama 0.32.15 还不支持 DFlash 2（需要 PR #17865）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>10. 结论</h2>
+<blockquote>
+<p><strong>本批 vLLM 数据下，Qwen3.8-27B 在 5090 + NVFP4 + fp8 KV 上的加速路线画像：</strong></p>
+</blockquote>
+<h3>10.1 一句话总结</h3>
+<blockquote>
+<ul>
+<li><strong>想要最快速度</strong>：<strong>vLLM + DFlash 2</strong>（32K 跑出 230 tok/s 峰值 / 170 tok/s 稳定）</li>
+<li><strong>想要长上下文 + 加速</strong>：<strong>vLLM + MTP</strong>（128K 跑出 120 tok/s，1.76×）</li>
+<li><strong>想要 192K 极限</strong>：<strong>vLLM + NVFP4 无加速</strong>（70 tok/s，已比 ollama Q4_K_M + MTP 快 35%）</li>
+<li><strong>跑 192K + MTP</strong>：<strong>❌ 装不下</strong>（KV 缺 580 MiB）</li>
+<li><strong>跑 256K</strong>：<strong>❌ 完全跑不动</strong></li>
+</ul>
+</blockquote>
+<h3>10.2 关键证据链</h3>
+<table>
+<thead>
+<tr>
+<th>事实</th>
+<th>证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DFlash 2 在 32K 跑出 230 tok/s</td>
+<td><code>32k-dflash.log</code> line 17:39:27 generation throughput 230.6</td>
+</tr>
+<tr>
+<td>MTP 在 128K 跑出 120 tok/s</td>
+<td><code>128k-mtp.log</code> 18:05:33-18:09:33 多个连续 110-130 tok/s</td>
+</tr>
+<tr>
+<td>MTP 192K 启动失败</td>
+<td><code>192k-mtp.log</code> line 116: ValueError KV 7.0 vs 6.42 GiB</td>
+</tr>
+<tr>
+<td>192K 无加速 70 tok/s</td>
+<td><code>1.log</code> 16:51:55 起的连续 71.6-72.3 tok/s</td>
+</tr>
+<tr>
+<td>NVFP4 量化 + Blackwell 算力</td>
+<td><code>modelopt.py:1028</code> 警告 + <code>flashinfer.py:890</code> arch=sm120</td>
+</tr>
+<tr>
+<td>DFlash 2 是 Inco 官方方案</td>
+<td><code>32k-dflash.log</code> line 7: speculative_config method='dflash', num_speculative_tokens=7</td>
+</tr>
+</tbody>
+</table>
+<h3>10.3 报告局限</h3>
+<blockquote>
+<p><strong>本报告不预测未实测的组合</strong>——<br />
+不知道 DFlash 2 在 128K / 192K 跑得怎样（数据缺失），<br />
+不知道 MTP 在 32K 跟 DFlash 谁更快（数据缺失），<br />
+不知道 NVFP4 + MTP 192K 砍到 177K 能不能救回来（理论可行但未实测），<br />
+也不知道 DFlash 2 在并发 &gt; 1 时会不会缩水（Inco 数据显示会）。</p>
+<p>需要补哪一档的测试，告诉我。</p>
+</blockquote>
+<hr />
+<blockquote>
+<p>报告数据来源：<br />
+- 7 份 vLLM 0.26.1rc1 日志（启动 + <code>loggers.py:310</code> 实时统计）<br />
+- 所有数字来自 <code>Engine 000: Avg prompt throughput / Avg generation throughput</code><br />
+- 启动参数来自 <code>non-default args</code> 行<br />
+- 显存分配来自 <code>gpu_model_runner.py:5508</code> + <code>gpu_worker.py:815</code></p>
+<p>如果想看更详细的 timing 表、或补测 DFlash 128K / 192K、MTP 32K、并发扩展，回复里喊一声。</p>
+</blockquote>
+</body>
+</html>
